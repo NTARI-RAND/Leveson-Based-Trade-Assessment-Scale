@@ -1,265 +1,180 @@
 # Leveson-Based Trade Assessment Scale (LBTAS)
 
-A rating system for digital commerce based on Nancy Leveson's aircraft software assessment methodology with bidirectional assessment criteria.
+A rating logic engine for community platforms where trust must be designed rather than optimized for engagement.
 
-## Overview
+LBTAS adapts Nancy Leveson's safety-critical software assessment methodology to digital commerce and community exchange. It provides a 6-point bidirectional rating scale with validation and aggregation logic, designed to integrate into platforms that take trust seriously enough to treat their rating systems as safety-critical infrastructure.
 
-The Leveson-Based Trade Assessment Scale (LBTAS) implements Nancy Leveson's aircraft software assessment methodology, developed for aerospace applications, adapted for digital commerce and economic assessment contexts. LBTAS provides a framework for capturing transaction quality data using a 6-point scale.
+Maintained by the [Network Theory Applied Research Institute](https://ntari.org) Forge Laboratory.
 
-## The Problem with Traditional Rating Systems
+## Why This Exists
 
-5-star systems do not provide data that motivates producer improvement. The 5-star system was developed in 1958 by Forbes Travel Guide (formerly Mobil Travel Guide) to advertise hotel quality along US interstate highways. It was designed as a one-way communication system for highway travel, not for digital commerce.
+Conventional rating systems — five stars, thumbs up, net promoter scores — are optimized for ranking and discovery. They tell a platform which items to surface. They do not tell a platform whether the exchanges happening on it are safe, fair, or producing the trust the platform claims to enable.
 
-**Limitations:**
-- Ratings provide limited value in e-commerce contexts
-- PR managers create barriers to policy change
-- Granularity fails to capture transaction complexity
-- One-directional assessment ignores consumer accountability
-- Data insufficiency forces reliance on comment sections
+Nancy Leveson's work on safety-critical software, including the systems used to evaluate aircraft control systems, established that safety is an emergent property of the system as a whole rather than a property of any individual component. Components can work as specified while the system fails. The failure mode is in the control structure, not the parts.
 
-## Why the Leveson Approach?
+LBTAS applies this insight to commerce and community exchange. Trust is emergent. Rating systems are themselves safety-critical infrastructure. Get the rating logic wrong and you get the failure modes platform capitalism has spent two decades demonstrating: capture, asymmetric power, predatory dynamics that no individual review can flag because the failure is structural.
 
-The Leveson System originates from aircraft software development where system failures result in loss of life or wasted R&D investment. This methodology:
+For the longer argument and research context, see the [LBTAS whitepaper](https://www.ntari.org/post/lbtas-leveson-based-trade-assessment-scale).
 
-- Uses a 6-point scale (from +4 to -1) with category definitions
-- Compresses meaning into each rating level
-- Reduces dependency on comment sections for data
-- Enables bidirectional assessment (both producer and consumer)
-- Supports data-driven improvement cycles
+## The Scale
 
-## Scale Definitions
+LBTAS uses a 6-point scale from -1 to +4. Each point has a specific definition that ties the rating to observable properties of the exchange, not to subjective satisfaction.
 
-### +4 **Delight**
-Interaction anticipates the evolution of user practices and concerns post-transaction
+| Rating | Name | Definition |
+|--------|------|------------|
+| **+4** | Delight | Interaction anticipates evolution of user practices and concerns post-transaction |
+| **+3** | No Negative Consequences | Interaction designed to prevent loss, exceeds basic quality standards |
+| **+2** | Basic Satisfaction | Interaction meets socially acceptable standards exceeding articulated demands |
+| **+1** | Basic Promise | Interaction meets all articulated user demands, no more |
+| **0** | Cynical Satisfaction | Interaction fulfills a basic promise requiring little to no discipline toward user satisfaction |
+| **-1** | No Trust | User was harmed, exploited, or received a product or service with evidence of no discipline or malicious intent |
 
-### +3 **No Negative Consequences**
-Interaction designed to prevent loss, exceed basic quality standards
+The asymmetric range (one negative point, four positive points) is deliberate. A single -1 rating signals a structural failure that warrants investigation; the gradations above zero capture the difference between a platform that meets its obligations and one that builds toward genuine user benefit.
 
-### +2 **Basic Satisfaction**
-Interaction meets socially acceptable standards, exceeding articulated user demands
+## What LBTAS Provides
 
-### +1 **Basic Promise**
-Interaction meets all articulated user demands, no more
+The core module is intentionally narrow. It handles:
 
-### 0 **Cynical Satisfaction**
-Interaction fulfills a basic promise requiring little to no discipline toward user satisfaction
+- **Rating validation** against the -1 to +4 scale
+- **Exchange management** for any ratable entity (vendors, customers, transactions, posts, contributions)
+- **Multi-criteria assessment** across four standard dimensions: reliability, usability, performance, support
+- **Statistical aggregation** including averages and raw rating retrieval
+- **Bidirectional assessment** through context-agnostic entity treatment — both parties to an exchange can be rated by using the same underlying logic
 
-### -1 **No Trust**
-User was harmed, exploited, or received a product/service with evidence of no discipline or malicious intent
+The module deliberately does not handle persistence, user interfaces, authentication, authorization, or analytics. Those belong to the integrating platform.
 
-## Bidirectional Assessment
+## What Your Platform Must Provide
 
-LBTAS enables two-way accountability in digital networks by maintaining ratings for both:
+Integration requires you to handle:
 
-- **Producers**: Identifies providers
-- **Consumers**: Identifies customers
+- **Database persistence** for ratings and audit trails
+- **User authentication and authorization** including the business logic of who can rate whom and when
+- **Rating collection interfaces** presenting the scale with clear definitions to users
+- **Aggregation displays** for showing accumulated ratings meaningfully
+- **Dispute resolution workflows** for contested ratings
 
-This approach facilitates community self-regulation and reduces the need for centralized moderation.
-
-## Features
-
-- **Methodology**: Based on aerospace assessment frameworks
-- **Bidirectional Assessment**: Rate both parties in transactions
-- **Granularity**: 6-point scale with definitions
-- **Dependencies**: Integration into systems
-- **Database Support**: Persistence layer support
-- **Open Source**: Community-driven development and customization
+This separation is the point. LBTAS is the rating logic; you bring everything else. The result is that LBTAS works in any platform context — e-commerce, member communities, cooperative networks, mutual aid platforms — without dragging in opinionated decisions about the rest of your stack.
 
 ## Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/NTARI-OpenCoreLab/Leveson-Based-Trade-Assessment-Scale.git
+git clone https://github.com/NTARI-ForgeLab/Leveson-Based-Trade-Assessment-Scale.git
 cd Leveson-Based-Trade-Assessment-Scale
-
-# Make executable (optional)
-chmod +x lbtas.py
-
-# Run directly
-python3 lbtas.py --help
 ```
 
-No external dependencies required. Uses Python 3 standard library only.
+Requires Python 3.6 or later. No external dependencies.
 
-## Quick Start
+## Minimal Integration Example
 
 ```python
-from lbtas import LevesonRatingSystem
+from LBTAS import LevesonRatingSystem
 
-# Initialize the rating system
+# Initialize the rating engine
 rating_system = LevesonRatingSystem()
 
-# Add an exchange (transaction)
-rating_system.add_exchange("transaction_001")
+# Register an exchange (vendor, customer, transaction, post — anything ratable)
+rating_system.add_exchange("vendor_acme_farms")
 
-# Add ratings (categories: reliability, usability, performance, support)
-rating_system.add_rating(
-    exchange_name="transaction_001",
-    criterion="reliability",
-    rating=3  # No Negative Consequences
-)
+# Submit ratings against the four criteria
+# In production, these values come from your UI after authorization checks
+rating_system.submit_rating("vendor_acme_farms", "reliability", 3)
+rating_system.submit_rating("vendor_acme_farms", "usability", 2)
+rating_system.submit_rating("vendor_acme_farms", "performance", 4)
+rating_system.submit_rating("vendor_acme_farms", "support", 3)
 
-# View average ratings
-ratings = rating_system.view_ratings("transaction_001")
-print(f"Ratings: {ratings}")
+# Retrieve aggregated ratings
+averages = rating_system.view_ratings("vendor_acme_farms")
+# Returns: {'reliability': 3.0, 'usability': 2.0, 'performance': 4.0, 'support': 3.0}
 ```
 
-### Command Line Interface
-
-```bash
-# Interactive rating
-python3 lbtas.py rate --exchange "MyService"
-
-# Programmatic rating
-python3 lbtas.py add --exchange "MyService" --criterion reliability --rating 3
-
-# View ratings
-python3 lbtas.py view --exchange "MyService"
-
-# Generate report
-python3 lbtas.py report
-
-# Export data
-python3 lbtas.py export --format json --output ratings.json
-```
-
-## Storage
-
-LBTAS uses JSON file storage for persistence:
+For bidirectional assessment, register both parties as separate exchanges:
 
 ```python
-# Initialize with storage file
-rating_system = LevesonRatingSystem(storage_file='ratings.json')
-
-# Ratings are saved automatically to the file
-rating_system.add_exchange("service_001")
-rating_system.add_rating("service_001", "reliability", 3)
+rating_system.add_exchange("vendor_acme_farms")
+rating_system.add_exchange("customer_jdoe")
+# Customer rates vendor, vendor rates customer — same logic, no special routing
 ```
 
-Storage file format:
-```json
-{
-  "service_001": {
-    "reliability": [3, 4, 3],
-    "usability": [2, 3],
-    "performance": [4],
-    "support": [3, 3, 2],
-    "_metadata": {
-      "created": "2024-09-04T10:30:00",
-      "total_ratings": 10
-    }
-  }
-}
+## Integration Pattern
+
+A typical platform integration looks like this:
+
+```python
+from LBTAS import LevesonRatingSystem
+
+class PlatformRatingService:
+    def __init__(self, database, auth_service):
+        self.lbtas = LevesonRatingSystem()
+        self.database = database
+        self.auth = auth_service
+
+    def submit_rating(self, user_id, exchange_id, criterion, rating):
+        # Platform handles authorization
+        if not self.auth.can_rate(user_id, exchange_id):
+            raise PermissionError("User not authorized to rate this exchange")
+
+        # LBTAS handles validation and aggregation
+        if exchange_id not in self.lbtas.exchanges:
+            self.lbtas.add_exchange(exchange_id)
+        self.lbtas.submit_rating(exchange_id, criterion, rating)
+
+        # Platform handles persistence
+        self.database.store_rating(user_id, exchange_id, criterion, rating)
+
+    def get_aggregated_ratings(self, exchange_id):
+        # Load historical ratings from database into LBTAS
+        if exchange_id not in self.lbtas.exchanges:
+            self.lbtas.add_exchange(exchange_id)
+        for record in self.database.get_ratings(exchange_id):
+            self.lbtas.submit_rating(exchange_id, record.criterion, record.rating)
+        return self.lbtas.view_ratings(exchange_id)
 ```
 
-### Rating Categories
+## Recommended Database Schema
 
-Default categories:
-- **Reliability**: Dependability and consistency
-- **Usability**: Ease of use and user experience
-- **Performance**: Speed and efficiency
-- **Support**: Customer service quality
+```sql
+CREATE TABLE lbtas_ratings (
+    id SERIAL PRIMARY KEY,
+    exchange_id VARCHAR(255) NOT NULL,
+    rater_id VARCHAR(255) NOT NULL,
+    criterion VARCHAR(50) NOT NULL,
+    rating INTEGER CHECK (rating >= -1 AND rating <= 4),
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    comment TEXT
+);
 
-Custom categories can be defined during initialization.
-
-## Use Cases
-
-### Academic Research
-- Study how rating scale design affects user behavior and market outcomes
-- Measure effects of bidirectional assessment on trust and cooperation
-- Analyze quality-based assessment alternatives to frameworks
-
-### E-Commerce Platforms
-- Implement quality metrics for marketplace transactions
-- Enable community-driven reputation systems
-- Reduce moderation overhead through self-regulation
-
-### Digital Cooperatives
-- Facilitate peer-to-peer accountability
-- Support governance structures
-- Enable data-driven policy improvements
-
-## Architecture
-
-LBTAS is implemented as a single Python module with:
-
-1. **Core class**: `LevesonRatingSystem` manages ratings and storage
-2. **JSON persistence**: File-based storage with automatic save
-3. **CLI interface**: Command-line tool for interactive and programmatic use
-4. **No external dependencies**: Uses Python standard library only
-
-The system supports:
-- Interactive rating collection
-- Programmatic rating submission
-- Custom rating categories
-- Report generation and data export
-
-## Documentation
-
-- [Full Documentation](docs/README.md)
-- [API Reference](docs/api.md)
-- [Integration Guide](docs/integration.md)
-- [Research Applications](docs/research.md)
-
-## Contributing
-
-Contributions are made through the NTARI Slack workspace:
-
-**Join the discussion**: https://ntari.slack.com/archives/C09N88JN2SH
-
-Please see our [Contributing Guidelines](CONTRIBUTING.md) for:
-
-- Code style and standards
-- Testing requirements
-- Pull request process
-- Community code of conduct
-
-## Research & Development
-
-This program was produced by the **Network Theory Applied Research Institute's Forge Laboratory** (now NTARI Research & Development) by Jodson B. Graves using ChatGPT-3 on September 4, 2024.
-
-### About NTARI Research & Development
-
-NTARI Research & Development is NTARI's software development program for creating digital systems and protocols that leverage network theory to enhance cooperative capabilities across the internet. We develop open-source tools, platforms, and frameworks that empower communities to build online ecosystems.
-
-**Learn more and support NTARI**: [https://ntari.org](https://ntari.org)
-
-## Citation
-
-If you use LBTAS in your research, please cite:
-
-```bibtex
-@software{lbtas2024,
-  title={Leveson-Based Trade Assessment Scale},
-  author={Graves, Jodson B.},
-  organization={Network Theory Applied Research Institute},
-  year={2024},
-  url={https://github.com/NTARI-OpenCoreLab/Leveson-Based-Trade-Assessment-Scale}
-}
+CREATE INDEX idx_lbtas_exchange ON lbtas_ratings(exchange_id);
+CREATE INDEX idx_lbtas_rater ON lbtas_ratings(rater_id);
 ```
 
-## References
+## Extending the Criteria
 
-- Leveson, N. G. (2011). *Engineering a Safer World: Systems Thinking Applied to Safety*. MIT Press.
-- Leveson, N. G. (2020). *CAST Handbook: How to Learn More from Incidents and Accidents*. MIT.
+The four default criteria (reliability, usability, performance, support) are extensible. If your domain requires additional dimensions — for example, ecological impact for an agricultural network, or accessibility for a civic platform — you can subclass `LevesonRatingSystem` or pass a custom criteria list to `add_exchange()`. The rating logic, validation, and aggregation work identically across any criteria set.
+
+We recommend keeping criteria small in number (four to six maximum) and definable in a single sentence each. Users do not reliably distinguish more than a handful of evaluation dimensions in a single rating event.
 
 ## License
 
-This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0) - see the [LICENSE](LICENSE) file for details.
+LBTAS is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0). See [LICENSE](./LICENSE) for the full text.
 
-The AGPL-3.0 license requires that:
-- Source code must be made available when the software is used over a network
-- Modifications must be released under the same license
-- Changes must be documented
-- Network use is considered distribution
+This licensing choice is structural. NTARI's [Licensing and Enforcement Strategy (P2-004)](https://www.ntari.org/post/licensing-and-enforcement-strategy-ntari-policy-p2-004) defaults all NTARI software to AGPL-3.0 specifically to prevent re-privatization of community infrastructure. If you integrate LBTAS into a network service, the AGPL requires you to make your modified source available to your users. We consider this a feature, not a constraint — rating infrastructure that can be captured and closed is rating infrastructure that will be.
 
-## Acknowledgments
+**Note on prior versions:** Earlier copies of the source file header indicated MIT licensing. This was a documentation error inconsistent with NTARI's published policy. The authoritative license is AGPL-3.0. Use under MIT terms prior to this correction is honored; new derivative work follows AGPL-3.0.
 
-- **Nancy Leveson** - Original methodology development
-- **NTARI Research & Development** - Research and implementation
-- **Open Source Community** - Contributions and feedback
+## Attribution
 
----
+LBTAS adapts methodology developed by Nancy G. Leveson, Professor of Aeronautics and Astronautics at the Massachusetts Institute of Technology. Her work on safety-critical systems — including STAMP (Systems-Theoretic Accident Model and Processes), the analysis of the Therac-25 accidents, and the Traffic Collision Avoidance System — established the systems-theoretic frame that LBTAS extends into commerce and community exchange contexts.
 
-**Maintained by**: [NTARI Research & Development](https://ntari.org)  
-**Questions?** Open an issue or contact us at info@ntari.org
+Professor Leveson has been informed of this work and does not endorse the application of her safety-critical methodology to commerce assessment. She has not restricted NTARI's use of the underlying framework. LBTAS is therefore an independent application of methods she developed for other purposes, and any errors in the adaptation are NTARI's alone. Her academic work is published independently of this project and should be consulted directly for authoritative treatment of safety-critical software assessment.
+
+## Contributing
+
+Volunteer contributors are welcome. NTARI recruits in Go, JavaScript, technical writing, and community organizing roles. Reach out at tech@ntari.org to discuss integration or contribution.
+
+For governance questions, licensing inquiries, or coordination with NTARI's other projects (AgriNet, SoHoLINK, Open Civic Standard), contact policy@ntari.org.
+
+## Citation
+
+If you reference LBTAS in academic work, please cite:
+
+> Network Theory Applied Research Institute. (2025). *Leveson-Based Trade Assessment Scale (LBTAS): A Research Framework for Digital Commerce Rating Systems* (Version 3.0). https://github.com/NTARI-ForgeLab/Leveson-Based-Trade-Assessment-Scale
