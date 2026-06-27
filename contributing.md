@@ -147,3 +147,18 @@ Contribution types recognized:
 - Research contributions (citations)
 - Documentation contributions (documentation credits)
 - Community support (acknowledgments)
+
+## Licensing: inbound = outbound (NTARI DCO)
+
+Contributions are accepted under a **Developer Certificate of Origin (DCO)**
+sign-off (see the `DCO` file). Your contribution is licensed under this
+project's existing AGPL-3.0 `LICENSE` — inbound matches outbound, there is no
+CLA, and **copyright stays with you**. Because copyright remains distributed
+across all contributors, no single party — including NTARI — can relicense the
+corpus without unanimous consent.
+
+Sign off every commit with `-s` (e.g. `git commit -s -m "..."`), which appends
+your `Signed-off-by` trailer. A DCO check runs on each pull request against
+`main`; if you forget, the failed check lists the commits to fix
+(`git commit --amend --no-edit --signoff` for one, `git rebase --signoff HEAD~N`
+for several, then `git push --force-with-lease`).
