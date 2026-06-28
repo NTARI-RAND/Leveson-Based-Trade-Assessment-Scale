@@ -11,17 +11,80 @@
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::{self, Write};
 use serde::{Deserialize, Serialize};
 use chrono::Utc;
 
-const VERSION: &str = "1.0.0";
+const VERSION: &str = "2.0.0";
 const AUTHOR: &str = "Network Theory Applied Research Institute";
 const LICENSE: &str = "AGPL-3.0";
 
 const DEFAULT_CATEGORIES: &[&str] = &["reliability", "usability", "performance", "support"];
+
+// Display order for distributions: best (+4) to worst (-1).
+const RATING_LEVELS: [i8; 6] = [4, 3, 2, 1, 0, -1];
+
+// Short label for each rating level.
+fn rating_label(level: i8) -> &'static str {
+    match level {
+        4 => "Delight",
+        3 => "No Negative Consequences",
+        2 => "Basic Satisfaction",
+        1 => "Basic Promise",
+        0 => "Cynical Satisfaction",
+        -1 => "No Trust",
+        _ => "",
+    }
+}
+
+// Capitalize the first character of a string for display.
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+// A distribution is the count of ratings at each level, keyed by level string
+// ("-1".."4"). Ratings are never averaged; this is the unit of reputation. A
+// BTreeMap keeps the keys in a stable serialized order (-1,0,1,2,3,4).
+type Distribution = BTreeMap<String, u64>;
+
+fn new_distribution() -> Distribution {
+    let mut dist = BTreeMap::new();
+    for level in ["-1", "0", "1", "2", "3", "4"] {
+        dist.insert(level.to_string(), 0u64);
+    }
+    dist
+}
+
+fn distribution_of(ratings: &[i8]) -> Distribution {
+    let mut dist = new_distribution();
+    for &rating in ratings {
+        *dist.entry(rating.to_string()).or_insert(0) += 1;
+    }
+    dist
+}
+
+// Render a distribution best-to-worst, one line per level: level label : count.
+fn format_distribution(dist: &Distribution, indent: &str) -> String {
+    let mut lines = Vec::new();
+    for &level in RATING_LEVELS.iter() {
+        let sign = if level > 0 {
+            format!("+{}", level)
+        } else if level == 0 {
+            " 0".to_string()
+        } else {
+            level.to_string()
+        };
+        let count = dist.get(&level.to_string()).copied().unwrap_or(0);
+        lines.push(format!("{}{} {:<24}: {}", indent, sign, rating_label(level), count));
+    }
+    lines.join("\n")
+}
 
 fn rating_descriptions() -> HashMap<i8, &'static str> {
     let mut map = HashMap::new();
@@ -91,25 +154,28 @@ struct StorageData {
     exchanges: HashMap<String, ExchangeData>,
 }
 
+// A category's rating distribution plus the total it counts.
+#[derive(Debug, Serialize)]
+struct CategorySummary {
+    distribution: Distribution,
+    total: u64,
+}
+
 #[derive(Debug)]
 struct RatingSummary {
-    ratings: HashMap<String, Option<f64>>,
+    ratings: BTreeMap<String, CategorySummary>,
 }
 
-#[derive(Debug)]
-struct ExchangePerformance {
-    name: String,
-    average: f64,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 struct SystemReport {
     total_exchanges: usize,
     total_ratings: usize,
-    system_average: Option<f64>,
-    category_averages: HashMap<String, Option<f64>>,
-    top_performers: Vec<ExchangePerformance>,
-    bottom_performers: Vec<ExchangePerformance>,
+    overall_distribution: Distribution,
+    category_distributions: BTreeMap<String, Distribution>,
+    exchange_distributions: BTreeMap<String, CategorySummary>,
+    // List of [exchange, -1 count] for exchanges with any -1, by count descending.
+    harm_flagged: Vec<(String, u64)>,
+    generated_at: String,
 }
 
 struct LevesonRatingSystem {
@@ -241,17 +307,14 @@ impl LevesonRatingSystem {
         let exchange = self.exchanges.get(name)
             .ok_or_else(|| format!("Exchange '{}' does not exist", name))?;
 
-        let mut ratings = HashMap::new();
+        let mut ratings = BTreeMap::new();
 
         for criterion in &self.categories {
             if let Some(category) = exchange.get_category(criterion) {
-                if !category.is_empty() {
-                    let sum: i32 = category.iter().map(|&x| x as i32).sum();
-                    let avg = sum as f64 / category.len() as f64;
-                    ratings.insert(criterion.clone(), Some((avg * 100.0).round() / 100.0));
-                } else {
-                    ratings.insert(criterion.clone(), None);
-                }
+                ratings.insert(criterion.clone(), CategorySummary {
+                    distribution: distribution_of(category),
+                    total: category.len() as u64,
+                });
             }
         }
 
@@ -266,88 +329,68 @@ impl LevesonRatingSystem {
 
     fn generate_report(&self) -> SystemReport {
         if self.exchanges.is_empty() {
+            let mut category_distributions = BTreeMap::new();
+            for category in &self.categories {
+                category_distributions.insert(category.clone(), new_distribution());
+            }
             return SystemReport {
                 total_exchanges: 0,
                 total_ratings: 0,
-                system_average: None,
-                category_averages: HashMap::new(),
-                top_performers: Vec::new(),
-                bottom_performers: Vec::new(),
+                overall_distribution: new_distribution(),
+                category_distributions,
+                exchange_distributions: BTreeMap::new(),
+                harm_flagged: Vec::new(),
+                generated_at: Utc::now().to_rfc3339(),
             };
         }
 
-        let mut all_ratings = Vec::new();
-        let mut category_totals: HashMap<String, Vec<i8>> = HashMap::new();
+        let mut overall: Vec<i8> = Vec::new();
+        let mut category_totals: BTreeMap<String, Vec<i8>> = BTreeMap::new();
         for category in &self.categories {
             category_totals.insert(category.clone(), Vec::new());
         }
 
-        let mut exchange_averages: HashMap<String, f64> = HashMap::new();
+        let mut exchange_distributions: BTreeMap<String, CategorySummary> = BTreeMap::new();
+        let mut harm_flagged: Vec<(String, u64)> = Vec::new();
 
         for (exchange_name, exchange_data) in &self.exchanges {
-            let mut exchange_ratings = Vec::new();
+            let mut exchange_ratings: Vec<i8> = Vec::new();
 
             for category in &self.categories {
                 if let Some(ratings) = exchange_data.get_category(category) {
-                    if !ratings.is_empty() {
-                        let sum: i32 = ratings.iter().map(|&x| x as i32).sum();
-                        let avg = sum as f64 / ratings.len() as f64;
-                        exchange_ratings.push(avg);
-                        category_totals.get_mut(category).unwrap().extend(ratings);
-                        all_ratings.extend(ratings);
-                    }
+                    category_totals.get_mut(category).unwrap().extend(ratings);
+                    exchange_ratings.extend(ratings);
+                    overall.extend(ratings);
                 }
             }
 
-            if !exchange_ratings.is_empty() {
-                let sum: f64 = exchange_ratings.iter().sum();
-                exchange_averages.insert(exchange_name.clone(), sum / exchange_ratings.len() as f64);
+            let dist = distribution_of(&exchange_ratings);
+            let minus_one = dist.get("-1").copied().unwrap_or(0);
+            if minus_one > 0 {
+                harm_flagged.push((exchange_name.clone(), minus_one));
             }
+            exchange_distributions.insert(exchange_name.clone(), CategorySummary {
+                distribution: dist,
+                total: exchange_ratings.len() as u64,
+            });
         }
 
-        let system_average = if !all_ratings.is_empty() {
-            let sum: i32 = all_ratings.iter().map(|&x| x as i32).sum();
-            Some(sum as f64 / all_ratings.len() as f64)
-        } else {
-            None
-        };
-
-        let mut category_averages = HashMap::new();
-        for (category, ratings) in &category_totals {
-            if !ratings.is_empty() {
-                let sum: i32 = ratings.iter().map(|&x| x as i32).sum();
-                category_averages.insert(category.clone(), Some(sum as f64 / ratings.len() as f64));
-            } else {
-                category_averages.insert(category.clone(), None);
-            }
+        let mut category_distributions: BTreeMap<String, Distribution> = BTreeMap::new();
+        for category in &self.categories {
+            category_distributions.insert(category.clone(), distribution_of(&category_totals[category]));
         }
 
-        let mut performances: Vec<ExchangePerformance> = exchange_averages.iter()
-            .map(|(name, &average)| ExchangePerformance {
-                name: name.clone(),
-                average,
-            })
-            .collect();
-
-        performances.sort_by(|a, b| b.average.partial_cmp(&a.average).unwrap());
-
-        let top_performers = performances.iter().take(5).cloned().map(|p| p).collect();
-        let bottom_performers: Vec<ExchangePerformance> = performances.iter()
-            .rev()
-            .take(5)
-            .cloned()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
+        // Sort harm-flagged by -1 count descending, then name ascending for stability.
+        harm_flagged.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
         SystemReport {
             total_exchanges: self.exchanges.len(),
-            total_ratings: all_ratings.len(),
-            system_average,
-            category_averages,
-            top_performers,
-            bottom_performers,
+            total_ratings: overall.len(),
+            overall_distribution: distribution_of(&overall),
+            category_distributions,
+            exchange_distributions,
+            harm_flagged,
+            generated_at: Utc::now().to_rfc3339(),
         }
     }
 
@@ -459,14 +502,18 @@ fn main() {
             let exchange = &args[2];
             match system.view_ratings(exchange) {
                 Ok(summary) => {
+                    let created = system.exchanges.get(exchange)
+                        .map(|e| e.metadata.created.clone())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let exchange_total: u64 = summary.ratings.values().map(|b| b.total).sum();
                     println!("\nRatings for '{}':", exchange);
                     println!("{}", "=".repeat(40));
+                    println!("In service since: {}", created);
+                    println!("Total ratings (transaction volume): {}", exchange_total);
                     for category in &system.categories {
-                        if let Some(rating) = summary.ratings.get(category) {
-                            match rating {
-                                Some(r) => println!("{:12}: {:4.2}", category, r),
-                                None => println!("{:12}: No ratings", category),
-                            }
+                        if let Some(block) = summary.ratings.get(category) {
+                            println!("\n{} (total: {}):", capitalize(category), block.total);
+                            println!("{}", format_distribution(&block.distribution, "  "));
                         }
                     }
                 }
@@ -485,15 +532,15 @@ fn main() {
                 println!("Registered exchanges:");
                 for exchange in exchanges {
                     if let Ok(summary) = system.view_ratings(&exchange) {
-                        let values: Vec<f64> = summary.ratings.values()
-                            .filter_map(|&r| r)
-                            .collect();
-                        if !values.is_empty() {
-                            let avg = values.iter().sum::<f64>() / values.len() as f64;
-                            println!("  {} (avg: {:.2})", exchange, avg);
-                        } else {
-                            println!("  {} (no ratings)", exchange);
+                        let total: u64 = summary.ratings.values().map(|b| b.total).sum();
+                        let harm: u64 = summary.ratings.values()
+                            .map(|b| b.distribution.get("-1").copied().unwrap_or(0))
+                            .sum();
+                        let mut line = format!("  {} ({} ratings)", exchange, total);
+                        if harm > 0 {
+                            line.push_str(&format!(", {}x -1 No Trust", harm));
                         }
+                        println!("{}", line);
                     }
                 }
             }
@@ -504,26 +551,36 @@ fn main() {
             println!("\nLBTAS System Report");
             println!("{}", "=".repeat(50));
             println!("Total exchanges: {}", report.total_exchanges);
-            println!("Total ratings: {}", report.total_ratings);
-            if let Some(avg) = report.system_average {
-                println!("System average: {:.2}", avg);
+            println!("Total ratings (transaction volume): {}", report.total_ratings);
+
+            println!("\nOverall distribution:");
+            println!("{}", format_distribution(&report.overall_distribution, "  "));
+
+            println!("\nCategory distributions:");
+            for category in &system.categories {
+                if let Some(dist) = report.category_distributions.get(category) {
+                    println!("  {}:", capitalize(category));
+                    println!("{}", format_distribution(dist, "    "));
+                }
             }
 
-            if !report.category_averages.is_empty() {
-                println!("\nCategory Averages:");
-                for category in &system.categories {
-                    if let Some(avg) = report.category_averages.get(category) {
-                        if let Some(a) = avg {
-                            println!("  {:12}: {:.2}", category, a);
-                        }
+            if !report.exchange_distributions.is_empty() {
+                println!("\nPer-exchange distributions:");
+                for exchange in system.get_all_exchanges() {
+                    if let Some(block) = report.exchange_distributions.get(&exchange) {
+                        let created = system.exchanges.get(&exchange)
+                            .map(|e| e.metadata.created.clone())
+                            .unwrap_or_else(|| "unknown".to_string());
+                        println!("  {} (transaction volume: {}, in service since: {}):", exchange, block.total, created);
+                        println!("{}", format_distribution(&block.distribution, "    "));
                     }
                 }
             }
 
-            if !report.top_performers.is_empty() {
-                println!("\nTop Performers:");
-                for perf in &report.top_performers {
-                    println!("  {}: {:.2}", perf.name, perf.average);
+            if !report.harm_flagged.is_empty() {
+                println!("\nHarm-flagged exchanges (received -1 No Trust):");
+                for (exchange, count) in &report.harm_flagged {
+                    println!("  {}: {}x -1", exchange, count);
                 }
             }
         }

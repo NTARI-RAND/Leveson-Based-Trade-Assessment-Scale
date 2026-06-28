@@ -1,6 +1,6 @@
 {
   "name": "lbtas",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Leveson-Based Trade Assessment Scale - A rating system for digital commerce",
   "main": "lbtas.js",
   "types": "lbtas.d.ts",
