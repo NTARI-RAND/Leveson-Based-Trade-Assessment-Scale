@@ -16,7 +16,7 @@
 import * as fs from 'fs';
 import * as readline from 'readline';
 
-const VERSION = '1.0.0';
+const VERSION = '2.0.0';
 const AUTHOR = 'Network Theory Applied Research Institute';
 const LICENSE = 'AGPL-3.0';
 
@@ -32,17 +32,65 @@ interface StorageData {
   [exchange: string]: ExchangeData;
 }
 
+// A distribution is the count of ratings at each level, keyed by level string
+// ("-1".."4"). Ratings are never averaged; this is the unit of reputation.
+type Distribution = { [level: string]: number };
+
+interface CategorySummary {
+  distribution: Distribution;
+  total: number;
+}
+
 interface RatingSummary {
-  [category: string]: number | null;
+  [category: string]: CategorySummary;
 }
 
 interface SystemReport {
   total_exchanges: number;
   total_ratings: number;
-  system_average: number | null;
-  category_averages: { [key: string]: number | null };
-  top_performers: Array<[string, number]>;
-  bottom_performers: Array<[string, number]>;
+  overall_distribution: Distribution;
+  category_distributions: { [category: string]: Distribution };
+  exchange_distributions: { [exchange: string]: CategorySummary };
+  // [exchange, -1 count] for exchanges with any -1, sorted by count descending.
+  harm_flagged: Array<[string, number]>;
+  generated_at: string;
+}
+
+// Display order for distributions: best (+4) to worst (-1).
+const RATING_LEVELS = [4, 3, 2, 1, 0, -1];
+
+// Short label for each rating level.
+const RATING_LABELS: { [key: string]: string } = {
+  '4': 'Delight',
+  '3': 'No Negative Consequences',
+  '2': 'Basic Satisfaction',
+  '1': 'Basic Promise',
+  '0': 'Cynical Satisfaction',
+  '-1': 'No Trust',
+};
+
+function newDistribution(): Distribution {
+  return { '-1': 0, '0': 0, '1': 0, '2': 0, '3': 0, '4': 0 };
+}
+
+function distributionOf(ratings: number[]): Distribution {
+  const dist = newDistribution();
+  for (const rating of ratings) {
+    const key = String(rating);
+    dist[key] = (dist[key] || 0) + 1;
+  }
+  return dist;
+}
+
+// Render a distribution best-to-worst, one line per level: level label : count.
+function formatDistribution(dist: Distribution, indent: string = '  '): string {
+  const lines: string[] = [];
+  for (const level of RATING_LEVELS) {
+    const sign = level > 0 ? `+${level}` : (level === 0 ? ' 0' : `${level}`);
+    const label = RATING_LABELS[String(level)];
+    lines.push(`${indent}${sign} ${label.padEnd(24)}: ${dist[String(level)]}`);
+  }
+  return lines.join('\n');
 }
 
 class LevesonRatingSystem {
@@ -191,12 +239,10 @@ class LevesonRatingSystem {
 
     for (const criterion of this.categories) {
       const ratings = this.exchanges[name][criterion];
-      if (ratings.length > 0) {
-        const avg = ratings.reduce((a, b) => a + b, 0) / ratings.length;
-        summary[criterion] = Math.round(avg * 100) / 100;
-      } else {
-        summary[criterion] = null;
-      }
+      summary[criterion] = {
+        distribution: distributionOf(ratings),
+        total: ratings.length,
+      };
     }
 
     return summary;
@@ -206,23 +252,35 @@ class LevesonRatingSystem {
     return Object.keys(this.exchanges);
   }
 
+  // The per-exchange "in service since" date stored at creation time.
+  getCreated(name: string): string {
+    const exchange = this.exchanges[name];
+    return exchange && exchange._metadata ? exchange._metadata.created : 'unknown';
+  }
+
   generateReport(): SystemReport {
     const totalExchanges = Object.keys(this.exchanges).length;
 
     if (totalExchanges === 0) {
+      const categoryDistributions: { [category: string]: Distribution } = {};
+      for (const category of this.categories) {
+        categoryDistributions[category] = newDistribution();
+      }
       return {
         total_exchanges: 0,
         total_ratings: 0,
-        system_average: null,
-        category_averages: {},
-        top_performers: [],
-        bottom_performers: []
+        overall_distribution: newDistribution(),
+        category_distributions: categoryDistributions,
+        exchange_distributions: {},
+        harm_flagged: [],
+        generated_at: new Date().toISOString()
       };
     }
 
-    const allRatings: number[] = [];
+    const overall: number[] = [];
     const categoryTotals: { [key: string]: number[] } = {};
-    const exchangeAverages: { [key: string]: number } = {};
+    const exchangeDistributions: { [exchange: string]: CategorySummary } = {};
+    const harmFlagged: Array<[string, number]> = [];
 
     for (const category of this.categories) {
       categoryTotals[category] = [];
@@ -233,44 +291,39 @@ class LevesonRatingSystem {
 
       for (const category of this.categories) {
         const ratings = exchangeData[category];
-        if (ratings.length > 0) {
-          const avg = ratings.reduce((a, b) => a + b, 0) / ratings.length;
-          exchangeRatings.push(avg);
-          categoryTotals[category].push(avg);
-          allRatings.push(...ratings);
+        for (const r of ratings) {
+          categoryTotals[category].push(r);
+          exchangeRatings.push(r);
+          overall.push(r);
         }
       }
 
-      if (exchangeRatings.length > 0) {
-        exchangeAverages[exchangeName] = 
-          exchangeRatings.reduce((a, b) => a + b, 0) / exchangeRatings.length;
+      const dist = distributionOf(exchangeRatings);
+      exchangeDistributions[exchangeName] = {
+        distribution: dist,
+        total: exchangeRatings.length
+      };
+      if (dist['-1'] > 0) {
+        harmFlagged.push([exchangeName, dist['-1']]);
       }
     }
 
-    const systemAverage = allRatings.length > 0
-      ? allRatings.reduce((a, b) => a + b, 0) / allRatings.length
-      : null;
-
-    const categoryAverages: { [key: string]: number | null } = {};
-    for (const [category, ratings] of Object.entries(categoryTotals)) {
-      categoryAverages[category] = ratings.length > 0
-        ? ratings.reduce((a, b) => a + b, 0) / ratings.length
-        : null;
+    const categoryDistributions: { [category: string]: Distribution } = {};
+    for (const category of this.categories) {
+      categoryDistributions[category] = distributionOf(categoryTotals[category]);
     }
 
-    const sortedExchanges = Object.entries(exchangeAverages)
-      .sort((a, b) => b[1] - a[1]);
-
-    const topPerformers = sortedExchanges.slice(0, 5);
-    const bottomPerformers = sortedExchanges.slice(-5).reverse();
+    // Sort harm-flagged by -1 count descending, then name ascending for stability.
+    harmFlagged.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 
     return {
       total_exchanges: totalExchanges,
-      total_ratings: allRatings.length,
-      system_average: systemAverage,
-      category_averages: categoryAverages,
-      top_performers: topPerformers,
-      bottom_performers: bottomPerformers
+      total_ratings: overall.length,
+      overall_distribution: distributionOf(overall),
+      category_distributions: categoryDistributions,
+      exchange_distributions: exchangeDistributions,
+      harm_flagged: harmFlagged,
+      generated_at: new Date().toISOString()
     };
   }
 
@@ -279,7 +332,11 @@ class LevesonRatingSystem {
   }
 
   exportToCSV(outputPath: string): void {
-    const lines: string[] = ['exchange,category,rating,timestamp'];
+    // Columns: exchange, category, rating, index (1-based position within the
+    // category). No timestamp: the CLI store does not record per-rating times,
+    // so a column of export-time stamps would be dishonest. Honest per-rating
+    // timestamps live only in the API event records.
+    const lines: string[] = ['exchange,category,rating,index'];
 
     for (const [exchangeName, exchangeData] of Object.entries(this.exchanges)) {
       for (const category of this.categories) {
@@ -351,14 +408,15 @@ async function main() {
           return;
         }
         const ratings = system.viewRatings(exchange);
+        const exchangeTotal = Object.values(ratings).reduce((sum, block) => sum + block.total, 0);
         console.log(`\nRatings for '${exchange}':`);
         console.log('='.repeat(40));
-        for (const [criterion, rating] of Object.entries(ratings)) {
-          if (rating !== null) {
-            console.log(`${criterion.padEnd(12)}: ${rating.toFixed(2)}`);
-          } else {
-            console.log(`${criterion.padEnd(12)}: No ratings`);
-          }
+        console.log(`In service since: ${system.getCreated(exchange)}`);
+        console.log(`Total ratings (transaction volume): ${exchangeTotal}`);
+        for (const [criterion, block] of Object.entries(ratings)) {
+          const name = criterion.charAt(0).toUpperCase() + criterion.slice(1);
+          console.log(`\n${name} (total: ${block.total}):`);
+          console.log(formatDistribution(block.distribution));
         }
         break;
       }
@@ -371,15 +429,13 @@ async function main() {
           console.log('Registered exchanges:');
           for (const exchange of exchanges) {
             const ratings = system.viewRatings(exchange);
-            const values = Object.values(ratings).filter(r => r !== null) as number[];
-            const overall = values.length > 0
-              ? values.reduce((a, b) => a + b, 0) / values.length
-              : null;
-            if (overall !== null) {
-              console.log(`  ${exchange} (avg: ${overall.toFixed(2)})`);
-            } else {
-              console.log(`  ${exchange} (no ratings)`);
+            const total = Object.values(ratings).reduce((s, block) => s + block.total, 0);
+            const harm = Object.values(ratings).reduce((s, block) => s + block.distribution['-1'], 0);
+            let line = `  ${exchange} (${total} ratings)`;
+            if (harm > 0) {
+              line += `, ${harm}x -1 No Trust`;
             }
+            console.log(line);
           }
         }
         break;
@@ -390,24 +446,30 @@ async function main() {
         console.log('\nLBTAS System Report');
         console.log('='.repeat(50));
         console.log(`Total exchanges: ${report.total_exchanges}`);
-        console.log(`Total ratings: ${report.total_ratings}`);
-        if (report.system_average !== null) {
-          console.log(`System average: ${report.system_average.toFixed(2)}`);
+        console.log(`Total ratings (transaction volume): ${report.total_ratings}`);
+
+        console.log('\nOverall distribution:');
+        console.log(formatDistribution(report.overall_distribution));
+
+        console.log('\nCategory distributions:');
+        for (const [category, dist] of Object.entries(report.category_distributions)) {
+          const name = category.charAt(0).toUpperCase() + category.slice(1);
+          console.log(`  ${name}:`);
+          console.log(formatDistribution(dist, '    '));
         }
 
-        if (Object.keys(report.category_averages).length > 0) {
-          console.log('\nCategory Averages:');
-          for (const [category, avg] of Object.entries(report.category_averages)) {
-            if (avg !== null) {
-              console.log(`  ${category.padEnd(12)}: ${avg.toFixed(2)}`);
-            }
+        if (Object.keys(report.exchange_distributions).length > 0) {
+          console.log('\nPer-exchange distributions:');
+          for (const [exchangeName, block] of Object.entries(report.exchange_distributions)) {
+            console.log(`  ${exchangeName} (transaction volume: ${block.total}, in service since: ${system.getCreated(exchangeName)}):`);
+            console.log(formatDistribution(block.distribution, '    '));
           }
         }
 
-        if (report.top_performers.length > 0) {
-          console.log('\nTop Performers:');
-          for (const [exchange, avg] of report.top_performers) {
-            console.log(`  ${exchange}: ${avg.toFixed(2)}`);
+        if (report.harm_flagged.length > 0) {
+          console.log('\nHarm-flagged exchanges (received -1 No Trust):');
+          for (const [exchangeName, count] of report.harm_flagged) {
+            console.log(`  ${exchangeName}: ${count}x -1`);
           }
         }
         break;

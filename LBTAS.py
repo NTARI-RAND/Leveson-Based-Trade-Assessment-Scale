@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union
 from datetime import datetime
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 __author__ = "Network Theory Applied Research Institute"
 __license__ = "AGPL-3.0"
 
@@ -45,7 +45,42 @@ class LevesonRatingSystem:
         3: "No Negative Consequences - Interaction designed to prevent loss, exceed basic quality.",
         4: "Delight - Interaction anticipates the evolution of user practices and concerns post-transaction."
     }
-    
+
+    # Display order for distributions: best (+4) down to worst (-1).
+    RATING_LEVELS = [4, 3, 2, 1, 0, -1]
+
+    # Short labels for each level (the part before " - " in RATING_DESCRIPTIONS).
+    RATING_LABELS = {
+        4: "Delight",
+        3: "No Negative Consequences",
+        2: "Basic Satisfaction",
+        1: "Basic Promise",
+        0: "Cynical Satisfaction",
+        -1: "No Trust",
+    }
+
+    @staticmethod
+    def _distribution(ratings: List[int]) -> Dict[str, int]:
+        """Count ratings at each level. Keys are level strings -1..+4.
+
+        Ratings are never averaged; the distribution (count per level) is the
+        unit of reputation. See CLAUDE.md.
+        """
+        dist = {str(level): 0 for level in (-1, 0, 1, 2, 3, 4)}
+        for rating in ratings:
+            dist[str(rating)] += 1
+        return dist
+
+    @classmethod
+    def _format_distribution(cls, dist: Dict[str, int], indent: str = "  ") -> str:
+        """Render a distribution best-to-worst, one line per level: level label : count."""
+        lines = []
+        for level in cls.RATING_LEVELS:
+            sign = f"+{level}" if level > 0 else (" 0" if level == 0 else f"{level}")
+            label = cls.RATING_LABELS[level]
+            lines.append(f"{indent}{sign} {label:<24}: {dist[str(level)]}")
+        return "\n".join(lines)
+
     def __init__(self, storage_file: Optional[str] = None, categories: Optional[List[str]] = None):
         """
         Initialize the LBTAS rating system.
@@ -142,84 +177,85 @@ class LevesonRatingSystem:
         
         print(f"\nRating completed for '{name}'!")
     
-    def view_ratings(self, name: str) -> Dict[str, Optional[float]]:
-        """View the average ratings for a specific exchange."""
+    def view_ratings(self, name: str) -> Dict[str, Dict]:
+        """Return the rating distribution for each criterion on an exchange.
+
+        Ratings are never averaged. Each criterion maps to the count at every
+        level (-1..+4) plus the category total::
+
+            {"<category>": {"distribution": {"-1": 0, ..., "4": 0}, "total": 0}}
+        """
         if name not in self.exchanges:
             raise ValueError(f"Exchange '{name}' does not exist.")
-        
-        ratings_summary = {}
-        
+
+        summary = {}
         for criterion in self.categories:
             ratings = self.exchanges[name][criterion]
-            if ratings:
-                avg_rating = sum(ratings) / len(ratings)
-                ratings_summary[criterion] = round(avg_rating, 2)
-            else:
-                ratings_summary[criterion] = None
-        
-        return ratings_summary
+            summary[criterion] = {
+                'distribution': self._distribution(ratings),
+                'total': len(ratings),
+            }
+        return summary
     
     def get_all_exchanges(self) -> List[str]:
         """Return a list of all exchanges."""
         return list(self.exchanges.keys())
     
     def generate_report(self) -> Dict:
-        """Generate a comprehensive system report."""
+        """Generate a system report as rating distributions (never averages).
+
+        Reputation is the count at each level plus the total. There is no
+        system average, no category means, and no average-ranked performer
+        lists. ``harm_flagged`` lists exchanges that received one or more -1
+        ("No Trust") ratings, sorted by -1 count descending.
+        """
         total_exchanges = len(self.exchanges)
-        
+
         if total_exchanges == 0:
             return {
                 'total_exchanges': 0,
-                'system_average': None,
-                'top_performers': [],
-                'bottom_performers': [],
-                'category_averages': {}
+                'total_ratings': 0,
+                'overall_distribution': self._distribution([]),
+                'category_distributions': {cat: self._distribution([]) for cat in self.categories},
+                'exchange_distributions': {},
+                'harm_flagged': [],
+                'generated_at': datetime.now().isoformat(),
             }
-        
-        # Calculate system-wide averages
-        all_ratings = []
+
+        overall_ratings = []
         category_totals = {cat: [] for cat in self.categories}
-        
-        exchange_averages = {}
-        
+        exchange_distributions = {}
+        harm_counts = {}
+
         for exchange_name, exchange_data in self.exchanges.items():
             exchange_ratings = []
-            
             for category in self.categories:
                 ratings = exchange_data[category]
-                if ratings:
-                    avg = sum(ratings) / len(ratings)
-                    exchange_ratings.append(avg)
-                    category_totals[category].extend(ratings)
-                    all_ratings.extend(ratings)
-            
-            if exchange_ratings:
-                exchange_averages[exchange_name] = sum(exchange_ratings) / len(exchange_ratings)
-        
-        # System average
-        system_average = sum(all_ratings) / len(all_ratings) if all_ratings else None
-        
-        # Category averages
-        category_averages = {}
-        for category, ratings in category_totals.items():
-            if ratings:
-                category_averages[category] = sum(ratings) / len(ratings)
-            else:
-                category_averages[category] = None
-        
-        # Top and bottom performers
-        sorted_exchanges = sorted(exchange_averages.items(), key=lambda x: x[1], reverse=True)
-        top_performers = sorted_exchanges[:5]  # Top 5
-        bottom_performers = sorted_exchanges[-5:]  # Bottom 5
-        
+                category_totals[category].extend(ratings)
+                exchange_ratings.extend(ratings)
+                overall_ratings.extend(ratings)
+
+            dist = self._distribution(exchange_ratings)
+            exchange_distributions[exchange_name] = {
+                'distribution': dist,
+                'total': len(exchange_ratings),
+            }
+            if dist['-1'] > 0:
+                harm_counts[exchange_name] = dist['-1']
+
+        # Sort harm-flagged exchanges by -1 count descending, then name for stability.
+        harm_flagged = sorted(harm_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
         return {
             'total_exchanges': total_exchanges,
-            'total_ratings': len(all_ratings),
-            'system_average': round(system_average, 2) if system_average else None,
-            'top_performers': top_performers,
-            'bottom_performers': bottom_performers,
-            'category_averages': {k: round(v, 2) if v else None for k, v in category_averages.items()},
-            'generated_at': datetime.now().isoformat()
+            'total_ratings': len(overall_ratings),
+            'overall_distribution': self._distribution(overall_ratings),
+            'category_distributions': {
+                cat: self._distribution(ratings) for cat, ratings in category_totals.items()
+            },
+            'exchange_distributions': exchange_distributions,
+            'harm_flagged': [[name, count] for name, count in harm_flagged],
+            'generated_at': datetime.now().isoformat(),
         }
     
     def save_to_file(self) -> None:
@@ -261,22 +297,29 @@ class LevesonRatingSystem:
             print(f"Warning: Could not load from {self.storage_file}: {e}")
     
     def export_to_csv(self, filename: str) -> None:
-        """Export ratings to CSV format."""
+        """Export ratings to CSV (columns: exchange, category, rating, index).
+
+        No timestamp column: the CLI store does not record per-rating times, so
+        writing ``datetime.now()`` on every row would falsely imply each rating
+        was made at export time. Honest per-rating timestamps live only in the
+        API event records. ``index`` is the 1-based position of the rating
+        within its category, matching the Go/Rust/TypeScript exports.
+        """
         import csv
-        
+
         with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-            fieldnames = ['exchange', 'category', 'rating', 'timestamp']
+            fieldnames = ['exchange', 'category', 'rating', 'index']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            
+
             writer.writeheader()
             for exchange_name, exchange_data in self.exchanges.items():
                 for category in self.categories:
-                    for rating in exchange_data[category]:
+                    for index, rating in enumerate(exchange_data[category], start=1):
                         writer.writerow({
                             'exchange': exchange_name,
                             'category': category,
                             'rating': rating,
-                            'timestamp': datetime.now().isoformat()
+                            'index': index,
                         })
 
 def main():
@@ -348,49 +391,58 @@ Examples:
             
         elif args.command == 'view':
             ratings = rating_system.view_ratings(args.exchange)
+            metadata = rating_system.exchanges[args.exchange].get('_metadata', {})
+            created = metadata.get('created', 'unknown')
+            exchange_total = sum(block['total'] for block in ratings.values())
             print(f"\nRatings for '{args.exchange}':")
             print("=" * 40)
-            for criterion, rating in ratings.items():
-                if rating is not None:
-                    print(f"{criterion.capitalize():12}: {rating:4.2f}")
-                else:
-                    print(f"{criterion.capitalize():12}: No ratings")
-                    
+            print(f"In service since: {created}")
+            print(f"Total ratings (transaction volume): {exchange_total}")
+            for criterion, block in ratings.items():
+                print(f"\n{criterion.capitalize()} (total: {block['total']}):")
+                print(LevesonRatingSystem._format_distribution(block['distribution']))
+
         elif args.command == 'list':
             exchanges = rating_system.get_all_exchanges()
             if exchanges:
                 print("Registered exchanges:")
                 for exchange in exchanges:
                     ratings = rating_system.view_ratings(exchange)
-                    avg = sum(r for r in ratings.values() if r is not None)
-                    count = sum(1 for r in ratings.values() if r is not None)
-                    overall = avg / count if count > 0 else None
-                    if overall:
-                        print(f"  {exchange} (avg: {overall:.2f})")
-                    else:
-                        print(f"  {exchange} (no ratings)")
+                    total = sum(block['total'] for block in ratings.values())
+                    harm = sum(block['distribution']['-1'] for block in ratings.values())
+                    line = f"  {exchange} ({total} ratings)"
+                    if harm > 0:
+                        line += f", {harm}x -1 No Trust"
+                    print(line)
             else:
                 print("No exchanges registered.")
-                
+
         elif args.command == 'report':
             report = rating_system.generate_report()
             print("\nLBTAS System Report")
             print("=" * 50)
             print(f"Total exchanges: {report['total_exchanges']}")
-            print(f"Total ratings: {report['total_ratings']}")
-            if report['system_average']:
-                print(f"System average: {report['system_average']}")
-            
-            if report['category_averages']:
-                print("\nCategory Averages:")
-                for category, avg in report['category_averages'].items():
-                    if avg:
-                        print(f"  {category.capitalize():12}: {avg}")
-            
-            if report['top_performers']:
-                print("\nTop Performers:")
-                for exchange, avg in report['top_performers']:
-                    print(f"  {exchange}: {avg:.2f}")
+            print(f"Total ratings (transaction volume): {report['total_ratings']}")
+
+            print("\nOverall distribution:")
+            print(LevesonRatingSystem._format_distribution(report['overall_distribution']))
+
+            print("\nCategory distributions:")
+            for category, dist in report['category_distributions'].items():
+                print(f"  {category.capitalize()}:")
+                print(LevesonRatingSystem._format_distribution(dist, indent="    "))
+
+            if report['exchange_distributions']:
+                print("\nPer-exchange distributions:")
+                for exchange_name, block in report['exchange_distributions'].items():
+                    created = rating_system.exchanges[exchange_name].get('_metadata', {}).get('created', 'unknown')
+                    print(f"  {exchange_name} (transaction volume: {block['total']}, in service since: {created}):")
+                    print(LevesonRatingSystem._format_distribution(block['distribution'], indent="    "))
+
+            if report['harm_flagged']:
+                print("\nHarm-flagged exchanges (received -1 No Trust):")
+                for exchange_name, count in report['harm_flagged']:
+                    print(f"  {exchange_name}: {count}x -1")
                     
         elif args.command == 'export':
             if args.format == 'json':
@@ -434,30 +486,14 @@ if __name__ == "__main__":
             if input().lower().startswith('y'):
                 rating_system.rate_exchange(demo_exchange)
                 
-                # Show results
+                # Show results as a distribution (ratings are never averaged).
                 ratings = rating_system.view_ratings(demo_exchange)
                 print(f"\nYour ratings for '{demo_exchange}':")
                 print("-" * 30)
-                for criterion, rating in ratings.items():
-                    if rating is not None:
-                        description = ""
-                        if rating >= 4:
-                            description = " (Delight!)"
-                        elif rating >= 3:
-                            description = " (Excellent)"
-                        elif rating >= 2:
-                            description = " (Good)"
-                        elif rating >= 1:
-                            description = " (Acceptable)"
-                        elif rating >= 0:
-                            description = " (Minimal)"
-                        else:
-                            description = " (Problematic)"
-                        
-                        print(f"{criterion.capitalize():12}: {rating:4.1f}{description}")
-                
-                avg_rating = sum(r for r in ratings.values() if r is not None) / len([r for r in ratings.values() if r is not None])
-                print(f"\nOverall Average: {avg_rating:.2f}")
+                for criterion, block in ratings.items():
+                    print(f"\n{criterion.capitalize()} (total: {block['total']}):")
+                    print(LevesonRatingSystem._format_distribution(block['distribution']))
+                print("\nRatings are recorded as a distribution (count per level), never averaged.")
             else:
                 print("Demo completed. Try 'python lbtas.py --help' for CLI options.")
                 

@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	Version = "1.0.0"
+	Version = "2.0.0"
 	Author  = "Network Theory Applied Research Institute"
 	License = "AGPL-3.0"
 )
@@ -40,6 +40,19 @@ var ratingDescriptions = map[int]string{
 	2:  "Basic Satisfaction - Interaction meets socially acceptable standards exceeding articulated user demands.",
 	3:  "No Negative Consequences - Interaction designed to prevent loss, exceed basic quality.",
 	4:  "Delight - Interaction anticipates the evolution of user practices and concerns post-transaction.",
+}
+
+// ratingLevels is the display order for distributions: best (+4) to worst (-1).
+var ratingLevels = []int{4, 3, 2, 1, 0, -1}
+
+// ratingLabels are the short labels for each level.
+var ratingLabels = map[int]string{
+	4:  "Delight",
+	3:  "No Negative Consequences",
+	2:  "Basic Satisfaction",
+	1:  "Basic Promise",
+	0:  "Cynical Satisfaction",
+	-1: "No Trust",
 }
 
 type Metadata struct {
@@ -57,20 +70,62 @@ type ExchangeData struct {
 
 type StorageData map[string]ExchangeData
 
-type RatingSummary map[string]*float64
+// Distribution is the count of ratings at each level, keyed by level string
+// ("-1".."4"). Ratings are never averaged; this is the unit of reputation.
+// When marshaled to JSON, Go sorts the string keys to -1,0,1,2,3,4.
+type Distribution map[string]int
 
-type SystemReport struct {
-	TotalExchanges   int                    `json:"total_exchanges"`
-	TotalRatings     int                    `json:"total_ratings"`
-	SystemAverage    *float64               `json:"system_average"`
-	CategoryAverages map[string]*float64    `json:"category_averages"`
-	TopPerformers    []ExchangePerformance  `json:"top_performers"`
-	BottomPerformers []ExchangePerformance  `json:"bottom_performers"`
+// CategorySummary is a distribution plus the total number of ratings it counts.
+type CategorySummary struct {
+	Distribution Distribution `json:"distribution"`
+	Total        int          `json:"total"`
 }
 
-type ExchangePerformance struct {
-	Name    string
-	Average float64
+type RatingSummary map[string]CategorySummary
+
+type SystemReport struct {
+	TotalExchanges        int                        `json:"total_exchanges"`
+	TotalRatings          int                        `json:"total_ratings"`
+	OverallDistribution   Distribution               `json:"overall_distribution"`
+	CategoryDistributions map[string]Distribution    `json:"category_distributions"`
+	ExchangeDistributions map[string]CategorySummary `json:"exchange_distributions"`
+	HarmFlagged           [][]interface{}            `json:"harm_flagged"`
+	GeneratedAt           string                     `json:"generated_at"`
+}
+
+// newDistribution returns a zeroed distribution with all six level keys present.
+func newDistribution() Distribution {
+	return Distribution{"-1": 0, "0": 0, "1": 0, "2": 0, "3": 0, "4": 0}
+}
+
+// distributionOf counts ratings at each level.
+func distributionOf(ratings []int) Distribution {
+	d := newDistribution()
+	for _, r := range ratings {
+		d[strconv.Itoa(r)]++
+	}
+	return d
+}
+
+// formatDistribution renders a distribution best-to-worst, one line per level.
+func formatDistribution(d Distribution, indent string) string {
+	var b strings.Builder
+	for i, level := range ratingLevels {
+		var sign string
+		switch {
+		case level > 0:
+			sign = fmt.Sprintf("+%d", level)
+		case level == 0:
+			sign = " 0"
+		default:
+			sign = strconv.Itoa(level)
+		}
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(fmt.Sprintf("%s%s %-24s: %d", indent, sign, ratingLabels[level], d[strconv.Itoa(level)]))
+	}
+	return b.String()
 }
 
 type LevesonRatingSystem struct {
@@ -239,11 +294,9 @@ func (lrs *LevesonRatingSystem) ViewRatings(name string) (RatingSummary, error) 
 
 	for _, criterion := range lrs.categories {
 		ratings := categoryRatings[criterion]
-		if len(ratings) > 0 {
-			avg := average(ratings)
-			summary[criterion] = &avg
-		} else {
-			summary[criterion] = nil
+		summary[criterion] = CategorySummary{
+			Distribution: distributionOf(ratings),
+			Total:        len(ratings),
 		}
 	}
 
@@ -263,26 +316,32 @@ func (lrs *LevesonRatingSystem) GenerateReport() SystemReport {
 	totalExchanges := len(lrs.exchanges)
 
 	if totalExchanges == 0 {
+		categoryDist := make(map[string]Distribution)
+		for _, category := range lrs.categories {
+			categoryDist[category] = newDistribution()
+		}
 		return SystemReport{
-			TotalExchanges:   0,
-			TotalRatings:     0,
-			SystemAverage:    nil,
-			CategoryAverages: make(map[string]*float64),
-			TopPerformers:    []ExchangePerformance{},
-			BottomPerformers: []ExchangePerformance{},
+			TotalExchanges:        0,
+			TotalRatings:          0,
+			OverallDistribution:   newDistribution(),
+			CategoryDistributions: categoryDist,
+			ExchangeDistributions: map[string]CategorySummary{},
+			HarmFlagged:           [][]interface{}{},
+			GeneratedAt:           time.Now().Format(time.RFC3339),
 		}
 	}
 
-	var allRatings []int
+	var overall []int
 	categoryTotals := make(map[string][]int)
 	for _, category := range lrs.categories {
 		categoryTotals[category] = []int{}
 	}
 
-	exchangeAverages := make(map[string]float64)
+	exchangeDistributions := make(map[string]CategorySummary)
+	harmCounts := make(map[string]int)
 
 	for exchangeName, exchangeData := range lrs.exchanges {
-		var exchangeRatings []float64
+		var exchangeRatings []int
 
 		categoryRatings := map[string][]int{
 			"reliability": exchangeData.Reliability,
@@ -293,68 +352,50 @@ func (lrs *LevesonRatingSystem) GenerateReport() SystemReport {
 
 		for _, category := range lrs.categories {
 			ratings := categoryRatings[category]
-			if len(ratings) > 0 {
-				avg := average(ratings)
-				exchangeRatings = append(exchangeRatings, avg)
-				categoryTotals[category] = append(categoryTotals[category], ratings...)
-				allRatings = append(allRatings, ratings...)
-			}
+			categoryTotals[category] = append(categoryTotals[category], ratings...)
+			exchangeRatings = append(exchangeRatings, ratings...)
+			overall = append(overall, ratings...)
 		}
 
-		if len(exchangeRatings) > 0 {
-			exchangeAverages[exchangeName] = averageFloat(exchangeRatings)
+		dist := distributionOf(exchangeRatings)
+		exchangeDistributions[exchangeName] = CategorySummary{
+			Distribution: dist,
+			Total:        len(exchangeRatings),
 		}
-	}
-
-	var systemAverage *float64
-	if len(allRatings) > 0 {
-		avg := average(allRatings)
-		systemAverage = &avg
-	}
-
-	categoryAverages := make(map[string]*float64)
-	for category, ratings := range categoryTotals {
-		if len(ratings) > 0 {
-			avg := average(ratings)
-			categoryAverages[category] = &avg
-		} else {
-			categoryAverages[category] = nil
+		if dist["-1"] > 0 {
+			harmCounts[exchangeName] = dist["-1"]
 		}
 	}
 
-	performances := make([]ExchangePerformance, 0, len(exchangeAverages))
-	for name, avg := range exchangeAverages {
-		performances = append(performances, ExchangePerformance{Name: name, Average: avg})
+	categoryDistributions := make(map[string]Distribution)
+	for _, category := range lrs.categories {
+		categoryDistributions[category] = distributionOf(categoryTotals[category])
 	}
 
-	sort.Slice(performances, func(i, j int) bool {
-		return performances[i].Average > performances[j].Average
+	// Sort harm-flagged exchanges by -1 count descending, then name for stability.
+	harmNames := make([]string, 0, len(harmCounts))
+	for name := range harmCounts {
+		harmNames = append(harmNames, name)
+	}
+	sort.Slice(harmNames, func(i, j int) bool {
+		if harmCounts[harmNames[i]] != harmCounts[harmNames[j]] {
+			return harmCounts[harmNames[i]] > harmCounts[harmNames[j]]
+		}
+		return harmNames[i] < harmNames[j]
 	})
-
-	topPerformers := performances
-	if len(topPerformers) > 5 {
-		topPerformers = topPerformers[:5]
-	}
-
-	bottomPerformers := make([]ExchangePerformance, 0)
-	if len(performances) > 0 {
-		start := len(performances) - 5
-		if start < 0 {
-			start = 0
-		}
-		bottomPerformers = performances[start:]
-		for i, j := 0, len(bottomPerformers)-1; i < j; i, j = i+1, j-1 {
-			bottomPerformers[i], bottomPerformers[j] = bottomPerformers[j], bottomPerformers[i]
-		}
+	harmFlagged := make([][]interface{}, 0, len(harmNames))
+	for _, name := range harmNames {
+		harmFlagged = append(harmFlagged, []interface{}{name, harmCounts[name]})
 	}
 
 	return SystemReport{
-		TotalExchanges:   totalExchanges,
-		TotalRatings:     len(allRatings),
-		SystemAverage:    systemAverage,
-		CategoryAverages: categoryAverages,
-		TopPerformers:    topPerformers,
-		BottomPerformers: bottomPerformers,
+		TotalExchanges:        totalExchanges,
+		TotalRatings:          len(overall),
+		OverallDistribution:   distributionOf(overall),
+		CategoryDistributions: categoryDistributions,
+		ExchangeDistributions: exchangeDistributions,
+		HarmFlagged:           harmFlagged,
+		GeneratedAt:           time.Now().Format(time.RFC3339),
 	}
 }
 
@@ -402,28 +443,6 @@ func (lrs *LevesonRatingSystem) ExportToCSV(outputPath string) error {
 	return nil
 }
 
-func average(numbers []int) float64 {
-	if len(numbers) == 0 {
-		return 0
-	}
-	sum := 0
-	for _, n := range numbers {
-		sum += n
-	}
-	return float64(sum) / float64(len(numbers))
-}
-
-func averageFloat(numbers []float64) float64 {
-	if len(numbers) == 0 {
-		return 0
-	}
-	sum := 0.0
-	for _, n := range numbers {
-		sum += n
-	}
-	return sum / float64(len(numbers))
-}
-
 func contains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {
@@ -431,6 +450,16 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// createdOrUnknown returns the stored creation date, or "unknown" when it is
+// missing (e.g. a hand-edited or foreign-written storage file with no
+// _metadata). Matches the Python/Rust/TypeScript fallback.
+func createdOrUnknown(created string) string {
+	if created == "" {
+		return "unknown"
+	}
+	return created
 }
 
 func main() {
@@ -506,14 +535,20 @@ func main() {
 			os.Exit(1)
 		}
 
+		created := createdOrUnknown(system.exchanges[exchange].Metadata.Created)
+		exchangeTotal := 0
+		for _, criterion := range system.categories {
+			exchangeTotal += ratings[criterion].Total
+		}
+
 		fmt.Printf("\nRatings for '%s':\n", exchange)
 		fmt.Println(strings.Repeat("=", 40))
+		fmt.Printf("In service since: %s\n", created)
+		fmt.Printf("Total ratings (transaction volume): %d\n", exchangeTotal)
 		for _, criterion := range system.categories {
-			if rating := ratings[criterion]; rating != nil {
-				fmt.Printf("%-12s: %4.2f\n", strings.Title(criterion), *rating)
-			} else {
-				fmt.Printf("%-12s: No ratings\n", strings.Title(criterion))
-			}
+			block := ratings[criterion]
+			fmt.Printf("\n%s (total: %d):\n", strings.Title(criterion), block.Total)
+			fmt.Println(formatDistribution(block.Distribution, "  "))
 		}
 
 	case "list":
@@ -524,19 +559,17 @@ func main() {
 			fmt.Println("Registered exchanges:")
 			for _, exchange := range exchanges {
 				ratings, _ := system.ViewRatings(exchange)
-				var sum float64
-				var count int
-				for _, rating := range ratings {
-					if rating != nil {
-						sum += *rating
-						count++
-					}
+				total := 0
+				harm := 0
+				for _, criterion := range system.categories {
+					total += ratings[criterion].Total
+					harm += ratings[criterion].Distribution["-1"]
 				}
-				if count > 0 {
-					fmt.Printf("  %s (avg: %.2f)\n", exchange, sum/float64(count))
-				} else {
-					fmt.Printf("  %s (no ratings)\n", exchange)
+				line := fmt.Sprintf("  %s (%d ratings)", exchange, total)
+				if harm > 0 {
+					line += fmt.Sprintf(", %dx -1 No Trust", harm)
 				}
+				fmt.Println(line)
 			}
 		}
 
@@ -545,24 +578,34 @@ func main() {
 		fmt.Println("\nLBTAS System Report")
 		fmt.Println(strings.Repeat("=", 50))
 		fmt.Printf("Total exchanges: %d\n", report.TotalExchanges)
-		fmt.Printf("Total ratings: %d\n", report.TotalRatings)
-		if report.SystemAverage != nil {
-			fmt.Printf("System average: %.2f\n", *report.SystemAverage)
+		fmt.Printf("Total ratings (transaction volume): %d\n", report.TotalRatings)
+
+		fmt.Println("\nOverall distribution:")
+		fmt.Println(formatDistribution(report.OverallDistribution, "  "))
+
+		fmt.Println("\nCategory distributions:")
+		for _, category := range system.categories {
+			fmt.Printf("  %s:\n", strings.Title(category))
+			fmt.Println(formatDistribution(report.CategoryDistributions[category], "    "))
 		}
 
-		if len(report.CategoryAverages) > 0 {
-			fmt.Println("\nCategory Averages:")
-			for _, category := range system.categories {
-				if avg := report.CategoryAverages[category]; avg != nil {
-					fmt.Printf("  %-12s: %.2f\n", strings.Title(category), *avg)
+		if len(report.ExchangeDistributions) > 0 {
+			fmt.Println("\nPer-exchange distributions:")
+			for _, exchange := range system.GetAllExchanges() {
+				block, ok := report.ExchangeDistributions[exchange]
+				if !ok {
+					continue
 				}
+				created := createdOrUnknown(system.exchanges[exchange].Metadata.Created)
+				fmt.Printf("  %s (transaction volume: %d, in service since: %s):\n", exchange, block.Total, created)
+				fmt.Println(formatDistribution(block.Distribution, "    "))
 			}
 		}
 
-		if len(report.TopPerformers) > 0 {
-			fmt.Println("\nTop Performers:")
-			for _, perf := range report.TopPerformers {
-				fmt.Printf("  %s: %.2f\n", perf.Name, perf.Average)
+		if len(report.HarmFlagged) > 0 {
+			fmt.Println("\nHarm-flagged exchanges (received -1 No Trust):")
+			for _, entry := range report.HarmFlagged {
+				fmt.Printf("  %s: %vx -1\n", entry[0], entry[1])
 			}
 		}
 

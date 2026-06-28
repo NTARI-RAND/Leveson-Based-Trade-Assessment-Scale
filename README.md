@@ -56,6 +56,12 @@ LBTAS enables two-way accountability in digital networks by maintaining ratings 
 
 This approach facilitates community self-regulation and reduces the need for centralized moderation.
 
+## Reading reputation
+
+Ratings are never averaged. A reputation is the count of ratings received at each level (`-1` through `+4`) plus the total. The total matters on its own: it reflects transaction volume and, indirectly, time in service. A clean distribution over 5,000 ratings is a stronger signal than the same shape over 5 — and averaging would erase that difference by collapsing both to the same number. (The count is a count of ratings; precise transaction and tenure figures come from the API, which timestamps each rating event.)
+
+A `-1` ("No Trust") is never diluted: the `report` command surfaces every exchange that has received one or more `-1` ratings in a `harm_flagged` list, and `list` appends a harm flag to any exchange with a `-1`.
+
 ## Features
 
 - **Methodology**: Based on aerospace assessment frameworks
@@ -99,9 +105,10 @@ rating_system.add_rating(
     rating=3  # No Negative Consequences
 )
 
-# View average ratings
+# Read the distribution (ratings are never averaged)
 ratings = rating_system.view_ratings("transaction_001")
-print(f"Ratings: {ratings}")
+print(ratings["reliability"])
+# {'distribution': {'-1': 0, '0': 0, '1': 0, '2': 0, '3': 1, '4': 0}, 'total': 1}
 ```
 
 ### Command Line Interface
