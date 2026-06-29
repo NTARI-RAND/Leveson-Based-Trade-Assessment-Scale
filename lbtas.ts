@@ -20,12 +20,19 @@ const VERSION = '2.0.0';
 const AUTHOR = 'Network Theory Applied Research Institute';
 const LICENSE = 'AGPL-3.0';
 
+interface ExchangeMetadata {
+  created: string;
+  total_ratings: number;
+}
+
 interface ExchangeData {
-  [category: string]: number[];
-  _metadata: {
-    created: string;
-    total_ratings: number;
-  };
+  // Category keys hold rating arrays; the reserved `_metadata` key holds the
+  // metadata object. The string-index value is the union of the two so the
+  // typed `_metadata` property is assignable to it — TypeScript rejects a typed
+  // property whose type conflicts with the string index signature. Category
+  // reads narrow back to number[] at the (few) access sites.
+  [category: string]: number[] | ExchangeMetadata;
+  _metadata: ExchangeMetadata;
 }
 
 interface StorageData {
@@ -175,7 +182,7 @@ class LevesonRatingSystem {
       throw new Error(`Rating must be integer between -1 and 4, got ${rating}`);
     }
 
-    this.exchanges[exchangeName][criterion].push(rating);
+    (this.exchanges[exchangeName][criterion] as number[]).push(rating);
     this.exchanges[exchangeName]._metadata.total_ratings++;
     this.saveToFile();
   }
@@ -222,7 +229,7 @@ class LevesonRatingSystem {
 
     for (const criterion of this.categories) {
       const rating = await this.getRating(criterion);
-      this.exchanges[name][criterion].push(rating);
+      (this.exchanges[name][criterion] as number[]).push(rating);
       this.exchanges[name]._metadata.total_ratings++;
     }
 
@@ -238,7 +245,7 @@ class LevesonRatingSystem {
     const summary: RatingSummary = {};
 
     for (const criterion of this.categories) {
-      const ratings = this.exchanges[name][criterion];
+      const ratings = this.exchanges[name][criterion] as number[];
       summary[criterion] = {
         distribution: distributionOf(ratings),
         total: ratings.length,
@@ -290,7 +297,7 @@ class LevesonRatingSystem {
       const exchangeRatings: number[] = [];
 
       for (const category of this.categories) {
-        const ratings = exchangeData[category];
+        const ratings = exchangeData[category] as number[];
         for (const r of ratings) {
           categoryTotals[category].push(r);
           exchangeRatings.push(r);
@@ -340,7 +347,7 @@ class LevesonRatingSystem {
 
     for (const [exchangeName, exchangeData] of Object.entries(this.exchanges)) {
       for (const category of this.categories) {
-        const ratings = exchangeData[category];
+        const ratings = exchangeData[category] as number[];
         for (let i = 0; i < ratings.length; i++) {
           lines.push(`${exchangeName},${category},${ratings[i]},${i + 1}`);
         }
