@@ -3,13 +3,16 @@
 This file is the **source of truth** for working on LBTAS. When any other
 document, code comment, or committed implementation conflicts with this file,
 this file wins — treat the conflict as a bug in the other artifact, not here.
+Read it before writing or modifying code in this repository.
 
 ## What LBTAS is
 
 LBTAS is a reputation system for digital commerce adapted from Nancy Leveson's
 aircraft-software assessment methodology, where a system failure means loss of
 life or wasted R&D rather than a bruised ego. It rates interactions on a 6-point
-scale and is **bidirectional**: both producers and consumers are rated.
+ordinal scale and is **bidirectional**: both producers and consumers are rated,
+so a single completed exchange can produce two ratings — one for the producer
+rating the consumer, and one for the consumer rating the producer.
 
 | Level | Label | Meaning |
 |------:|-------|---------|
@@ -20,9 +23,31 @@ scale and is **bidirectional**: both producers and consumers are rated.
 |  0 | Cynical Satisfaction | Fulfills a basic promise with little to no discipline toward satisfaction |
 | -1 | No Trust | User was harmed, exploited, or received service with no discipline or malicious intent |
 
+Ratings are integers from -1 to +4; higher is better. The scale is
+meaning-loaded — each level carries a specific definition and must not be
+treated as an interchangeable point on a continuous axis.
+
 The project ships four reference CLI implementations that must stay
-**behaviourally identical**: `LBTAS.py`, `lbtas.go`, `lbtas.rs`, `lbtas.ts`.
-A networked API (see *Data model*, below) is the production surface.
+**behaviourally identical**: `lbtas.py`, `lbtas.go`, `lbtas.rs`, `lbtas.ts`.
+A networked API (below) is the production surface and the canonical successor to
+the CLIs. The CLI files are a reference for the scale definitions and storage
+shape; their behaviour must follow this document, not the other way around.
+
+## What the API does
+
+The API runs on the **NTARIHQ machine** and is responsible for three things:
+
+1. **Serving rating prompts on triggers.** When a transaction or interaction
+   event fires, the API presents the appropriate LBTAS prompt to the relevant
+   party. Because LBTAS is bidirectional, one completed exchange can trigger two
+   prompts: the producer to rate the consumer, and the consumer to rate the
+   producer.
+2. **Storing ratings locally.** Persistence stays on NTARIHQ — no external
+   rating store, no third-party dependency for the data layer. The local store
+   is the system of record.
+3. **Serving records to authorized users for review.** Reading rating history
+   is gated behind authorization. Unauthenticated or unauthorized callers must
+   not be able to read records.
 
 ## Do not average ratings
 
@@ -121,6 +146,53 @@ distributions, plus the harm list:
   date as `In service since: <date>`.
 - Interactive / demo output prints counts, never an average.
 
+## The -1 comment requirement
+
+A rating of **-1 must carry a justifying comment of 500 words or less.**
+
+- The comment is **mandatory** for `-1`. Reject any attempt to submit a `-1`
+  without one.
+- Enforce the **500-word maximum** at the API boundary. Reject submissions that
+  exceed it rather than silently truncating.
+- For ratings 0 through +4, comments are optional unless product requirements
+  say otherwise.
+
+The reasoning: `-1` is the only level that asserts harm or bad faith against
+another party in the network. Requiring a bounded, written justification makes
+the most consequential rating accountable and reviewable, and gives authorized
+reviewers the context they need without permitting an unbounded dumping ground.
+(The reference CLI store predates this requirement and has no comment field;
+enforcement lives at the API boundary.)
+
+## Data model — the API event store
+
+Because reputation is a distribution and `-1`s carry comments, the store keeps
+**individual rating events**, not running tallies. Each event captures at least:
+
+- the **rated party** (the subject of the reputation),
+- the **rater** (bidirectional: producer or consumer),
+- the **rating value** (`-1`..`+4`),
+- the **category**, if categories are in use,
+- the **comment** (required when value is `-1`, ≤500 words),
+- a **timestamp**,
+- the **triggering exchange / transaction id**.
+
+Distributions are computed from these events on read; the events also preserve
+the audit trail authorized reviewers depend on. Because events carry timestamps
+and transaction ids, API reads for a rated party expose — alongside the
+distribution and `total` — `first_rated_at`, `last_rated_at`, and a
+transaction/event count (distinct triggering exchanges). This is where precise
+transaction volume and time in service live; the CLI's per-category totals are a
+coarser stand-in and must not be claimed to equal transaction count.
+
+## Authorization
+
+Reading records is a privileged operation. Implement an explicit authorization
+layer between callers and the rating store. Submitting a rating in response to a
+served prompt and reviewing accumulated records are **distinct capabilities and
+must be authorized separately**. When in doubt, **fail closed** — an
+unauthenticated or unauthorized caller must never read records.
+
 ## Critical divergence from the existing code
 
 The originally committed CLI code computed averages everywhere — `system_average`,
@@ -132,7 +204,7 @@ report path, it is a regression: remove it. The acceptance bar is that
 `grep -iE 'average|mean|system_average'` finds no averaging logic in any CLI read
 or report path (a comment that *explains* the ban is fine).
 
-## Storage format (do not change)
+## Storage format (CLI — do not change)
 
 The CLI persists JSON of the shape:
 
@@ -154,34 +226,22 @@ timestamp column**: the CLI store does not record per-rating times, so a column
 of `datetime.now()` values written at export time would falsely imply each
 rating was made then. All four implementations must use the same header.
 
-## Data model (the API event store)
-
-The production API stores each rating as an **event** carrying, at minimum:
-
-- a per-event **timestamp**,
-- a **triggering exchange / transaction id**,
-- the rated party, the criterion, and the level (`-1`..`+4`).
-
-Because events carry timestamps and transaction ids, API reads for a rated party
-expose — alongside the distribution and `total` — `first_rated_at`,
-`last_rated_at`, and a transaction/event count (distinct triggering exchanges).
-This is where precise transaction volume and time in service live; the CLI's
-per-category totals are a coarser stand-in and must not be claimed to equal
-transaction count.
-
-Out of scope for the CLI (API event-model features): the `-1` mandatory-comment /
-500-word-limit enforcement, and the FastAPI service itself.
-
 ## Versioning
 
 The distribution change is a **breaking** change to the read API. The project is
 at **2.0.0**. Keep every version string in sync when bumping: `__version__` in
-`LBTAS.py`, `version` in `package.json`, `version` in `Cargo.toml`, `VERSION` in
+`lbtas.py`, `version` in `package.json`, `version` in `Cargo.toml`, `VERSION` in
 `lbtas.rs`, `Version` in `lbtas.go`, `VERSION` in `lbtas.ts`, and `__version__`
 in `init.py`.
 
 ## Licensing
 
-The project is **AGPL-3.0**. Network use counts as distribution, which is the
-relevant case for a networked API, so AGPL-3.0 is correct and wins any conflict
-with stray `GPL-3.0` strings. Every source file should declare AGPL-3.0.
+The project is **AGPL-3.0** — the GNU **Affero** General Public License v3.0, not
+the plain GPL v3. Network use counts as distribution, which is the relevant case
+for a networked API, so AGPL-3.0 is correct and wins any conflict with stray
+`GPL-3.0` strings. Every source file should declare AGPL-3.0, and the `LICENSE`
+file must be the full AGPL-3.0 text.
+
+## Contact
+
+Network Theory Applied Research Institute — info@ntari.org
