@@ -209,7 +209,9 @@ An implementation is conformant iff **all** hold:
 The standalone reference implementations here cover the scale and the distribution
 faithfully; the covenant lifecycle (role-scoping, narrative, contest/dismiss, timeout
 default) is currently most complete in the Agrinet backend and is being reconciled back
-into the reference impls.
+into the reference impls. See [CONFORMANCE.md](CONFORMANCE.md) for the per-implementation
+matrix (audited: no violations; role-scoping is the one code-level gap in the standalone
+impls).
 
 ---
 
