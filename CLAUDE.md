@@ -5,6 +5,15 @@ document, code comment, or committed implementation conflicts with this file,
 this file wins — treat the conflict as a bug in the other artifact, not here.
 Read it before writing or modifying code in this repository.
 
+**Conformance self-description: see `CONFORMANCE.md`** — the repo's role in
+Janus-Facing Architecture (the covenant layer's assessment scale), the
+invariant-to-binding table, and the named stand-ins. A change that alters any
+binding there updates that file in the same PR. The architecture's covenant
+invariants (never average; the lowest rating is the breach; symmetric;
+whether-never-how-much; non-portable by default) are not negotiable by
+feature request; a request to reintroduce an average, a single score, or a
+ranking derived from one is refused and surfaced, not implemented.
+
 ## What LBTAS is
 
 LBTAS is a reputation system for digital commerce adapted from Nancy Leveson's

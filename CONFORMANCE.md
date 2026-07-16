@@ -1,52 +1,46 @@
-# LBTAS Conformance Record
+# Conformance — Janus-Facing Architecture
 
-Status of each implementation against [`SPEC.md`](SPEC.md) (P3-014). Per the JFA
-method, this ships the status plainly rather than performing the absence of a gap.
+The repo's self-description in the architecture's own terms, stated **before** anything product-specific, per the architecture's ordering rule. Every conformance claim is bound to the mechanism and check that enforces it, or it is labeled a stand-in. Unbound prose is marketing.
 
-**Audited:** 2026-07-01 against SPEC v0.1. **Result:** no violations — no averaging
-anywhere, no label drift, no limit derived from the harm distribution.
+The architecture is **Janus-Facing Architecture (JFA)** — NTARI's unified architecture document, free documentation under the project's AGPL-3.0 commons.
 
-Legend: **yes** = implemented · **no** = not yet (code-level) · **app** = operator-app
-concern, documented not implemented in a standalone reference impl.
+## Role declaration
 
-## Matrix
+LBTAS is the **assessment scale** of the JFA **covenant layer**: reputation as a standing promise not to harm, carried as a full distribution — never a score. The logic is the safety engineer's (Leveson): harm is a discrete event to be surfaced, not a quantity to be smoothed; two crashes in seventy-three flights grounds the fleet. The scale is domain-general: a consuming economy adopts it and interprets it in context.
 
-| # | Invariant (SPEC §) | py | ts | go | rs | Agrinet¹ |
-|---|---|:--:|:--:|:--:|:--:|:--:|
-| 1 | Scale −1..+4 with exact labels (§1) | yes | yes | yes | yes | yes |
-| 2 | Distribution, never an average (§2) | yes | yes | yes | yes | yes² |
-| 3 | Role-scoped reputation (§3) | no | no | no | no | yes |
-| 4 | −1 carries a narrative ≤500w, operator-local (§4) | app | app | app | app | yes |
-| 5 | Append-only; dismissal annotates, never erases (§4, §6) | app | app | app | app | yes |
-| 6 | Symmetric — contestable both ways (§5) | app | app | app | app | yes |
-| 7 | Timeout default +2, system-attributed & marked (§7) | app | app | app | app | yes |
-| 8 | Gates whether, not how much (§8) | yes | yes | yes | yes | yes |
+| This repo's term | Architecture role |
+|---|---|
+| The 6-level ordinal scale (−1..+4) | the covenant's meaning-loaded rating vocabulary; **−1 is the breach itself** |
+| `{distribution, total}` | reputation as the architecture requires it carried: count at each level beside the total |
+| Bidirectional rating | covenant symmetry between counterparties |
+| Per-category distributions | relation-scoped reads (never collapsed into one figure) |
 
-¹ Agrinet = `services/lbtas.js` + `repositories/ratingRepository.js` in `NTARI-RAND/Agrinet`.
-² Agrinet additionally **throws** if a single-number reputation score is ever requested (`utils/reputation.js`).
+## Invariants and their bindings — as of `main` (v2.0.0)
 
-## What each layer is responsible for
+| Invariant (architecture) | Mechanism here | Check |
+|---|---|---|
+| Reputation MUST NOT be averaged into a score | v2.0.0 read API returns `{distribution, total}` per category; `system_average`, `category_averages`, and average-ranked performer lists are **removed** | CHANGELOG 2.0.0 (breaking); the unit-of-reputation comment in code; no averaging path exists to call |
+| The **lowest rating is the breach itself** | −1 ("No Trust") is a discrete harm event held permanently visible in the distribution beside any volume | Distribution shape; no cancellation arithmetic exists |
+| The covenant is **symmetric** between counterparties | Bidirectional by design: one exchange can produce two ratings, producer↔consumer, same scale both ways | Scale definition; API |
+| The scale is **meaning-loaded, ordinal** — not a continuous axis | Each level carries a specific definition; integers −1..+4 | CLAUDE.md canonical table; validation |
+| Reputation gates **whether**, never **how much** | The library derives no credit limit, weight, or ceiling from the distribution — no such API exists | API surface |
+| **Non-portable by default** | Per-platform data; no cross-platform identity or import path in the library | API surface |
+| **Observational diversity across implementations** | Four reference implementations (Go, Python, Rust, TypeScript) that must stay in parity — independent encodings of one behavior | CLAUDE.md parity rule; see stand-ins |
 
-The scale and the distribution read-model are the **algorithm core** — every reference
-implementation carries them, and all five agree on the six labels (Delight, No Negative
-Consequences, Basic Satisfaction, Basic Promise, Cynical Satisfaction, No Trust) with no
-drift.
+## Deliberately out of scope
 
-The rest of the covenant lifecycle divides by layer:
+Contestation mechanics — claim filing, adjudication, dismissal-as-annotation, the seal — belong to the consuming platform's **record and dispute layers**, not to this library. LBTAS supplies the vocabulary and the distribution; the record supplies answerability. A consuming platform that adopts the scale without an answerable-claim pipeline has not implemented the covenant.
 
-- **Code-level, belongs in a reference impl:** the scale and the distribution (§1, §2),
-  and **role-scoping** (§3). Role-scoping — keying the distribution by the rated party's
-  role — is the one code-level invariant not yet in the standalone reference impls; it is
-  fully implemented in Agrinet and is the tracked enhancement for py/ts/go/rs.
-- **Operator-app concerns, correctly *documented* not implemented in a reference impl:**
-  the ≤500-word narrative and its operator-local storage (§4), append-only events with
-  dismissal-as-annotation (§4, §6), bidirectional contest (§5), and the rating-window
-  timeout default (§7). These require a datastore, an adjudicator role, and a clock —
-  they live in the operator (Agrinet), which realizes all of them.
+## Stand-ins and open residuals
 
-## Honest gaps
+- **Cross-implementation golden vectors are a target, not yet a gate.** Parity across the four implementations is a stated rule enforced by review; a shared vector suite that fails CI on drift (the protocol repo's pattern) is the committed check. Until it exists, parity is review-enforced and labeled so.
+- **Adjudicator answerability** is the architecture's named symmetry breach — a rated party with no answer. It binds on consuming platforms' dispute layers; this library must not paper over it by exposing any unanswerable rating path.
+- **Relation typing** (trade / adjudication-conduct / verdict-satisfaction) is carried here only as per-category distributions; full typed-relation discipline binds at the record layer of consuming platforms.
 
-- **Role-scoping in py/ts/go/rs** — not yet implemented (tracked). The core reads are
-  role-agnostic; an operator needing per-role distributions does so as Agrinet does.
-- No implementation averages, exposes a single score, or derives a limit from the harm
-  distribution — the invariants whose violation would rebuild the credit bureau all hold.
+## Dependency declaration
+
+A leaf library: no dependency on any coordinator, front end, or record implementation. Consuming economies depend on it; it depends on none of them.
+
+## Product-specific notes (last, per the ordering rule)
+
+Adopted per economy at the economic level. Consuming platforms pin a released version; the v2 distribution model is the floor for any new adoption.
