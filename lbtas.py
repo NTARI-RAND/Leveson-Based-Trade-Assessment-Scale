@@ -19,8 +19,7 @@ import json
 import os
 import sys
 import argparse
-from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 from datetime import datetime
 
 __version__ = "2.0.0"
@@ -76,7 +75,12 @@ class LevesonRatingSystem:
         """Render a distribution best-to-worst, one line per level: level label : count."""
         lines = []
         for level in cls.RATING_LEVELS:
-            sign = f"+{level}" if level > 0 else (" 0" if level == 0 else f"{level}")
+            if level > 0:
+                sign = f"+{level}"
+            elif level == 0:
+                sign = " 0"
+            else:
+                sign = str(level)
             label = cls.RATING_LABELS[level]
             lines.append(f"{indent}{sign} {label:<24}: {dist[str(level)]}")
         return "\n".join(lines)
@@ -322,6 +326,69 @@ class LevesonRatingSystem:
                             'index': index,
                         })
 
+def _print_view(rating_system, exchange):
+    ratings = rating_system.view_ratings(exchange)
+    metadata = rating_system.exchanges[exchange].get('_metadata', {})
+    created = metadata.get('created', 'unknown')
+    exchange_total = sum(block['total'] for block in ratings.values())
+    print(f"\nRatings for '{exchange}':")
+    print("=" * 40)
+    print(f"In service since: {created}")
+    print(f"Total ratings (transaction volume): {exchange_total}")
+    for criterion, block in ratings.items():
+        print(f"\n{criterion.capitalize()} (total: {block['total']}):")
+        print(LevesonRatingSystem._format_distribution(block['distribution']))
+
+def _print_list(rating_system):
+    exchanges = rating_system.get_all_exchanges()
+    if exchanges:
+        print("Registered exchanges:")
+        for exchange in exchanges:
+            ratings = rating_system.view_ratings(exchange)
+            total = sum(block['total'] for block in ratings.values())
+            harm = sum(block['distribution']['-1'] for block in ratings.values())
+            line = f"  {exchange} ({total} ratings)"
+            if harm > 0:
+                line += f", {harm}x -1 No Trust"
+            print(line)
+    else:
+        print("No exchanges registered.")
+
+def _print_report(rating_system):
+    report = rating_system.generate_report()
+    print("\nLBTAS System Report")
+    print("=" * 50)
+    print(f"Total exchanges: {report['total_exchanges']}")
+    print(f"Total ratings (transaction volume): {report['total_ratings']}")
+
+    print("\nOverall distribution:")
+    print(LevesonRatingSystem._format_distribution(report['overall_distribution']))
+
+    print("\nCategory distributions:")
+    for category, dist in report['category_distributions'].items():
+        print(f"  {category.capitalize()}:")
+        print(LevesonRatingSystem._format_distribution(dist, indent="    "))
+
+    if report['exchange_distributions']:
+        print("\nPer-exchange distributions:")
+        for exchange_name, block in report['exchange_distributions'].items():
+            created = rating_system.exchanges[exchange_name].get('_metadata', {}).get('created', 'unknown')
+            print(f"  {exchange_name} (transaction volume: {block['total']}, in service since: {created}):")
+            print(LevesonRatingSystem._format_distribution(block['distribution'], indent="    "))
+
+    if report['harm_flagged']:
+        print("\nHarm-flagged exchanges (received -1 No Trust):")
+        for exchange_name, count in report['harm_flagged']:
+            print(f"  {exchange_name}: {count}x -1")
+
+def _export(rating_system, args):
+    if args.format == 'json':
+        with open(args.output, 'w') as f:
+            json.dump(rating_system.exchanges, f, indent=2)
+    elif args.format == 'csv':
+        rating_system.export_to_csv(args.output)
+    print(f"Exported to {args.output}")
+
 def main():
     """Command-line interface for LBTAS."""
     parser = argparse.ArgumentParser(
@@ -358,10 +425,10 @@ Examples:
     view_parser.add_argument('--exchange', required=True, help='Exchange name to view')
     
     # List command
-    list_parser = subparsers.add_parser('list', help='List all exchanges')
+    subparsers.add_parser('list', help='List all exchanges')
     
     # Report command
-    report_parser = subparsers.add_parser('report', help='Generate system report')
+    subparsers.add_parser('report', help='Generate system report')
     
     # Export command
     export_parser = subparsers.add_parser('export', help='Export ratings')
@@ -390,68 +457,17 @@ Examples:
             print(f"Added rating {args.rating} for {args.criterion} to {args.exchange}")
             
         elif args.command == 'view':
-            ratings = rating_system.view_ratings(args.exchange)
-            metadata = rating_system.exchanges[args.exchange].get('_metadata', {})
-            created = metadata.get('created', 'unknown')
-            exchange_total = sum(block['total'] for block in ratings.values())
-            print(f"\nRatings for '{args.exchange}':")
-            print("=" * 40)
-            print(f"In service since: {created}")
-            print(f"Total ratings (transaction volume): {exchange_total}")
-            for criterion, block in ratings.items():
-                print(f"\n{criterion.capitalize()} (total: {block['total']}):")
-                print(LevesonRatingSystem._format_distribution(block['distribution']))
+            _print_view(rating_system, args.exchange)
 
         elif args.command == 'list':
-            exchanges = rating_system.get_all_exchanges()
-            if exchanges:
-                print("Registered exchanges:")
-                for exchange in exchanges:
-                    ratings = rating_system.view_ratings(exchange)
-                    total = sum(block['total'] for block in ratings.values())
-                    harm = sum(block['distribution']['-1'] for block in ratings.values())
-                    line = f"  {exchange} ({total} ratings)"
-                    if harm > 0:
-                        line += f", {harm}x -1 No Trust"
-                    print(line)
-            else:
-                print("No exchanges registered.")
+            _print_list(rating_system)
 
         elif args.command == 'report':
-            report = rating_system.generate_report()
-            print("\nLBTAS System Report")
-            print("=" * 50)
-            print(f"Total exchanges: {report['total_exchanges']}")
-            print(f"Total ratings (transaction volume): {report['total_ratings']}")
+            _print_report(rating_system)
 
-            print("\nOverall distribution:")
-            print(LevesonRatingSystem._format_distribution(report['overall_distribution']))
-
-            print("\nCategory distributions:")
-            for category, dist in report['category_distributions'].items():
-                print(f"  {category.capitalize()}:")
-                print(LevesonRatingSystem._format_distribution(dist, indent="    "))
-
-            if report['exchange_distributions']:
-                print("\nPer-exchange distributions:")
-                for exchange_name, block in report['exchange_distributions'].items():
-                    created = rating_system.exchanges[exchange_name].get('_metadata', {}).get('created', 'unknown')
-                    print(f"  {exchange_name} (transaction volume: {block['total']}, in service since: {created}):")
-                    print(LevesonRatingSystem._format_distribution(block['distribution'], indent="    "))
-
-            if report['harm_flagged']:
-                print("\nHarm-flagged exchanges (received -1 No Trust):")
-                for exchange_name, count in report['harm_flagged']:
-                    print(f"  {exchange_name}: {count}x -1")
-                    
         elif args.command == 'export':
-            if args.format == 'json':
-                with open(args.output, 'w') as f:
-                    json.dump(rating_system.exchanges, f, indent=2)
-            elif args.format == 'csv':
-                rating_system.export_to_csv(args.output)
-            print(f"Exported to {args.output}")
-            
+            _export(rating_system, args)
+
     except KeyboardInterrupt:
         print("\nOperation cancelled.")
         sys.exit(0)
