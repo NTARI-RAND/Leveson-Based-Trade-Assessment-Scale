@@ -153,6 +153,10 @@ def _init_db(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_rating_events_party_role ON rating_events (rated_party, role)"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_rating_events_history "
+        "ON rating_events (rated_party, role, timestamp, id)"
+    )
     # SPEC.md §4/§6: a dismissal annotates, never erases. It is its own
     # append-only record referencing the original event, never an edit or
     # delete against rating_events. One dismissal per event (UNIQUE).
