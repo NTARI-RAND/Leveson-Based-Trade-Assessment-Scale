@@ -18,6 +18,7 @@ from unittest.mock import patch
 _TEMP = tempfile.TemporaryDirectory()
 os.environ['LBTAS_DB_PATH'] = str(Path(_TEMP.name) / 'api.sqlite')
 os.environ['LBTAS_API_KEY'] = 'test-key'
+os.environ['LBTAS_SUBMIT_KEY'] = 'test-key'
 
 from api import event_store, main  # noqa: E402
 
