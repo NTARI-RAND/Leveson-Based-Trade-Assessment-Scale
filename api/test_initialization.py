@@ -54,7 +54,7 @@ async def request(method, path, body=None):
 
 class InitializationTests(unittest.TestCase):
     def test_api_startup_initializes_schema_and_requests_do_not_run_ddl(self):
-        """Reintroducing schema setup per request causes this trace check to fail."""
+        """Startup creates the schema; POST ratings and GET history run no DDL."""
         statements = []
         connect = sqlite3.connect
 
