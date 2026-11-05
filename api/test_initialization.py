@@ -22,6 +22,9 @@ os.environ['LBTAS_SUBMIT_KEY'] = 'test-key'
 
 from api import event_store, main  # noqa: E402
 
+if event_store.DEFAULT_DB_PATH != os.environ['LBTAS_DB_PATH']:
+    raise RuntimeError('Event store was imported before the test database was configured')
+
 
 async def request(method, path, body=None):
     """Send an ASGI HTTP request through the real application router."""
