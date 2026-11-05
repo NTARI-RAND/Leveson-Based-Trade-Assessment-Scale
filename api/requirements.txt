@@ -10,6 +10,12 @@ uvicorn[standard]>=0.20.0
 #   cd api && python3 test_rating_validation.py
 #   cd api && python3 test_event_store.py
 #
+# Run initialization/lifespan tests from the REPO ROOT:
+#   python3 -m unittest api.test_initialization
+# HTTP test clients must enter the app lifespan; for TestClient, use
+#   with TestClient(app) as client:
+# so startup creates the schema before sending requests.
+#
 # Reads require an API key (fails closed otherwise):
 #   LBTAS_API_KEY=<your-key> uvicorn api.main:app --reload
 #   curl -H "X-API-Key: <your-key>" http://localhost:8000/ratings/<party>/<role>
