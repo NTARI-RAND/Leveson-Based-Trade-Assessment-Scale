@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"syscall"
 	"testing"
@@ -20,13 +21,14 @@ func TestCSVExportReportsDiskWriteFailure(t *testing.T) {
 		return
 	}
 	// Isolate the process limit: it must never affect the parent test suite.
+	testName := t.Name()
 	for _, tc := range []struct{ name, limit, ratings string }{
 		{"buffered-flush", "0", "1"},
 		{"write-zero-limit", "0", "1000"},
 		{"write-partial", "4096", "1000"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			command := exec.Command(os.Args[0], "-test.run=^TestCSVExportReportsDiskWriteFailure$")
+			command := exec.Command(os.Args[0], "-test.run=^"+regexp.QuoteMeta(testName)+"$")
 			command.Env = append(os.Environ(), "LBTAS_TEST_FILE_LIMIT="+tc.limit, "LBTAS_TEST_RATING_COUNT="+tc.ratings)
 			if output, err := command.CombinedOutput(); err != nil {
 				t.Fatalf("limited export: %v\n%s", err, output)
