@@ -56,10 +56,14 @@ func TestCSVExportReportsDiskWriteFailure(t *testing.T) {
 		return
 	}
 	// Isolate the process limit: it must never affect the parent test suite.
-	for _, limit := range []string{"0", "4096"} {
-		t.Run(limit, func(t *testing.T) {
+	for _, tc := range []struct{ name, limit, ratings string }{
+		{"buffered-flush", "0", "1"},
+		{"write-zero-limit", "0", "1000"},
+		{"write-partial", "4096", "1000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			command := exec.Command(os.Args[0], "-test.run=^TestCSVExportReportsDiskWriteFailure$")
-			command.Env = append(os.Environ(), "LBTAS_TEST_FILE_LIMIT="+limit)
+			command.Env = append(os.Environ(), "LBTAS_TEST_FILE_LIMIT="+tc.limit, "LBTAS_TEST_RATING_COUNT="+tc.ratings)
 			if output, err := command.CombinedOutput(); err != nil {
 				t.Fatalf("limited export: %v\n%s", err, output)
 			}
@@ -74,11 +78,15 @@ func runLimitedExport(t *testing.T, limitText string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	count, err := strconv.Atoi(os.Getenv("LBTAS_TEST_RATING_COUNT"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	system := NewLevesonRatingSystem("", nil)
 	if err := system.AddExchange("supplier"); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < count; i++ {
 		if err := system.AddRating("supplier", "reliability", 4); err != nil {
 			t.Fatal(err)
 		}
