@@ -326,6 +326,7 @@ class LevesonRatingSystem:
                             'index': index,
                         })
 
+
 def _print_view(rating_system, exchange):
     ratings = rating_system.view_ratings(exchange)
     metadata = rating_system.exchanges[exchange].get('_metadata', {})
@@ -338,6 +339,7 @@ def _print_view(rating_system, exchange):
     for criterion, block in ratings.items():
         print(f"\n{criterion.capitalize()} (total: {block['total']}):")
         print(LevesonRatingSystem._format_distribution(block['distribution']))
+
 
 def _print_list(rating_system):
     exchanges = rating_system.get_all_exchanges()
@@ -353,6 +355,7 @@ def _print_list(rating_system):
             print(line)
     else:
         print("No exchanges registered.")
+
 
 def _print_report(rating_system):
     report = rating_system.generate_report()
@@ -381,6 +384,7 @@ def _print_report(rating_system):
         for exchange_name, count in report['harm_flagged']:
             print(f"  {exchange_name}: {count}x -1")
 
+
 def _export(rating_system, args):
     if args.format == 'json':
         with open(args.output, 'w') as f:
@@ -388,6 +392,7 @@ def _export(rating_system, args):
     elif args.format == 'csv':
         rating_system.export_to_csv(args.output)
     print(f"Exported to {args.output}")
+
 
 def main():
     """Command-line interface for LBTAS."""
