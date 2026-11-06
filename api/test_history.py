@@ -74,9 +74,9 @@ class HistoryTests(unittest.TestCase):
                 "INSERT INTO upholds (event_id, upheld_by, reason, timestamp) VALUES (5, 'operator', 'Evidence checked', '2026-01-03')"
             )
 
-    def connection(self) -> sqlite3.Connection:
+    def connection(self, *args, **kwargs) -> sqlite3.Connection:
         """Use a real independent connection for each request."""
-        return self.connect(self.path)
+        return self.connect(self.path, *args, **kwargs)
 
     def read(self, **params) -> dict:
         """Read through the mounted HTTP route, including query validation."""
@@ -244,7 +244,7 @@ class HistoryTests(unittest.TestCase):
                         )
                 return cursor
 
-        def reader() -> sqlite3.Connection:
+        def reader(*_args, **_kwargs) -> sqlite3.Connection:
             conn = sqlite3.connect(database, factory=InterleavedConnection)
             conn.row_factory = sqlite3.Row
             return conn
