@@ -60,6 +60,7 @@ the Free Software Foundation, either version 3 of the License, or
 
 import os
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -69,7 +70,14 @@ from pydantic import BaseModel, Field
 from . import event_store
 from .rating_validation import RatingValidationError, validate_rating_submission
 
-app = FastAPI(title="LBTAS API", version="2.0.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Initialize the local store before the application accepts requests."""
+    event_store.initialize_database()
+    yield
+
+
+app = FastAPI(title="LBTAS API", version="2.0.0", lifespan=lifespan)
 
 API_KEY_ENV_VAR = "LBTAS_API_KEY"
 DEFAULT_RATING_WINDOW_SECONDS = 7 * 24 * 60 * 60  # 7 days
@@ -163,7 +171,7 @@ def submit_rating(submission: RatingSubmission) -> dict:
     event = submission.model_dump()
     event["timestamp"] = datetime.now(timezone.utc).isoformat()
 
-    conn = event_store.get_connection()
+    conn = event_store.get_connection(initialize=False)
     try:
         event_store.insert_event(
             conn,
@@ -193,7 +201,7 @@ def dismiss_rating(event_id: int, dismissal: DismissalRequest) -> dict:
     annotation both stay permanently visible via GET's "dismissed" list."""
     timestamp = datetime.now(timezone.utc).isoformat()
 
-    conn = event_store.get_connection()
+    conn = event_store.get_connection(initialize=False)
     try:
         event_store.dismiss_event(
             conn,
@@ -226,7 +234,7 @@ def contest_rating(event_id: int, contest: ContestRequest) -> dict:
     yet gated behind per-party auth."""
     timestamp = datetime.now(timezone.utc).isoformat()
 
-    conn = event_store.get_connection()
+    conn = event_store.get_connection(initialize=False)
     try:
         event_store.contest_event(
             conn,
@@ -261,7 +269,7 @@ def uphold_rating(event_id: int, uphold: UpholdRequest) -> dict:
     look unquestioned."""
     timestamp = datetime.now(timezone.utc).isoformat()
 
-    conn = event_store.get_connection()
+    conn = event_store.get_connection(initialize=False)
     try:
         event_store.uphold_contest(
             conn,
@@ -318,7 +326,7 @@ def register_exchange(exchange: ExchangeRegistration) -> dict:
         else DEFAULT_RATING_WINDOW_SECONDS
     )
 
-    conn = event_store.get_connection()
+    conn = event_store.get_connection(initialize=False)
     try:
         event_store.register_exchange(
             conn,
@@ -353,7 +361,7 @@ def apply_timeouts(exchange_id: str) -> dict:
     this exchange still unrated once its rating window has elapsed.
     Idempotent — safe to call repeatedly, e.g. from an external scheduler,
     since this API has no background worker of its own."""
-    conn = event_store.get_connection()
+    conn = event_store.get_connection(initialize=False)
     try:
         result = event_store.apply_timeout_defaults(conn, exchange_id, datetime.now(timezone.utc))
     except event_store.ExchangeNotFoundError as e:
@@ -374,7 +382,7 @@ def read_ratings(rated_party: str, role: str) -> dict:
     entirely — they're always listed under "dismissed", annotated with who
     dismissed them and why, even if that leaves no active events at all.
     """
-    conn = event_store.get_connection()
+    conn = event_store.get_connection(initialize=False)
     try:
         active_rows = event_store.get_events_for_party_role(conn, rated_party, role)
         dismissed_rows = event_store.get_dismissed_events_for_party_role(conn, rated_party, role)

@@ -113,11 +113,23 @@ class TimeoutAlreadyAppliedError(Exception):
     """
 
 
-def get_connection(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
+def get_connection(db_path: str = DEFAULT_DB_PATH, *, initialize: bool = True) -> sqlite3.Connection:
+    """Open a store connection, initializing it for standalone callers by default."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    _init_db(conn)
+    if initialize:
+        try:
+            _init_db(conn)
+        except Exception:
+            conn.close()
+            raise
     return conn
+
+
+def initialize_database(db_path: str = DEFAULT_DB_PATH) -> None:
+    """Create the schema before opening lightweight request connections."""
+    conn = get_connection(db_path)
+    conn.close()
 
 
 def _init_db(conn: sqlite3.Connection) -> None:
