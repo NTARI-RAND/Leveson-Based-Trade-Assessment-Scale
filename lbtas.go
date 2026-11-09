@@ -123,7 +123,7 @@ func formatDistribution(d Distribution, indent string) string {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(fmt.Sprintf("%s%s %-24s: %d", indent, sign, ratingLabels[level], d[strconv.Itoa(level)]))
+		fmt.Fprintf(&b, "%s%s %-24s: %d", indent, sign, ratingLabels[level], d[strconv.Itoa(level)])
 	}
 	return b.String()
 }
@@ -407,17 +407,22 @@ func (lrs *LevesonRatingSystem) ExportToJSON(outputPath string) error {
 	return os.WriteFile(outputPath, data, 0644)
 }
 
-func (lrs *LevesonRatingSystem) ExportToCSV(outputPath string) error {
+func (lrs *LevesonRatingSystem) ExportToCSV(outputPath string) (err error) {
 	file, err := os.Create(outputPath)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		closeErr := file.Close()
+		if err == nil {
+			err = closeErr
+		}
+	}()
 
 	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	writer.Write([]string{"exchange", "category", "rating", "index"})
+	if err := writer.Write([]string{"exchange", "category", "rating", "index"}); err != nil {
+		return err
+	}
 
 	for exchangeName, exchangeData := range lrs.exchanges {
 		categoryRatings := map[string][]int{
@@ -430,17 +435,20 @@ func (lrs *LevesonRatingSystem) ExportToCSV(outputPath string) error {
 		for _, category := range lrs.categories {
 			ratings := categoryRatings[category]
 			for i, rating := range ratings {
-				writer.Write([]string{
+				if err := writer.Write([]string{
 					exchangeName,
 					category,
 					strconv.Itoa(rating),
 					strconv.Itoa(i + 1),
-				})
+				}); err != nil {
+					return err
+				}
 			}
 		}
 	}
 
-	return nil
+	writer.Flush()
+	return writer.Error()
 }
 
 func contains(slice []string, item string) bool {
@@ -481,161 +489,179 @@ func main() {
 
 	switch command {
 	case "rate":
-		if len(os.Args) < 3 {
-			fmt.Println("Error: Exchange name required")
-			os.Exit(1)
-		}
-		exchange := os.Args[2]
-		if !contains(system.GetAllExchanges(), exchange) {
-			if err := system.AddExchange(exchange); err != nil {
-				fmt.Printf("Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
-		if err := system.RateExchange(exchange); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
-		}
-
+		rateCommand(system, os.Args)
 	case "add":
-		if len(os.Args) < 5 {
-			fmt.Println("Error: exchange, criterion, and rating required")
-			os.Exit(1)
-		}
-		exchange := os.Args[2]
-		criterion := os.Args[3]
-		rating, err := strconv.Atoi(os.Args[4])
-		if err != nil {
-			fmt.Printf("Error: invalid rating: %v\n", err)
-			os.Exit(1)
-		}
-
-		if !contains(system.GetAllExchanges(), exchange) {
-			if err := system.AddExchange(exchange); err != nil {
-				fmt.Printf("Error: %v\n", err)
-				os.Exit(1)
-			}
-		}
-
-		if err := system.AddRating(exchange, criterion, rating); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Added rating %d for %s to %s\n", rating, criterion, exchange)
-
+		addCommand(system, os.Args)
 	case "view":
-		if len(os.Args) < 3 {
-			fmt.Println("Error: Exchange name required")
-			os.Exit(1)
-		}
-		exchange := os.Args[2]
-		ratings, err := system.ViewRatings(exchange)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
-		}
-
-		created := createdOrUnknown(system.exchanges[exchange].Metadata.Created)
-		exchangeTotal := 0
-		for _, criterion := range system.categories {
-			exchangeTotal += ratings[criterion].Total
-		}
-
-		fmt.Printf("\nRatings for '%s':\n", exchange)
-		fmt.Println(strings.Repeat("=", 40))
-		fmt.Printf("In service since: %s\n", created)
-		fmt.Printf("Total ratings (transaction volume): %d\n", exchangeTotal)
-		for _, criterion := range system.categories {
-			block := ratings[criterion]
-			fmt.Printf("\n%s (total: %d):\n", strings.Title(criterion), block.Total)
-			fmt.Println(formatDistribution(block.Distribution, "  "))
-		}
-
+		viewCommand(system, os.Args)
 	case "list":
-		exchanges := system.GetAllExchanges()
-		if len(exchanges) == 0 {
-			fmt.Println("No exchanges registered.")
-		} else {
-			fmt.Println("Registered exchanges:")
-			for _, exchange := range exchanges {
-				ratings, _ := system.ViewRatings(exchange)
-				total := 0
-				harm := 0
-				for _, criterion := range system.categories {
-					total += ratings[criterion].Total
-					harm += ratings[criterion].Distribution["-1"]
-				}
-				line := fmt.Sprintf("  %s (%d ratings)", exchange, total)
-				if harm > 0 {
-					line += fmt.Sprintf(", %dx -1 No Trust", harm)
-				}
-				fmt.Println(line)
-			}
-		}
-
+		listCommand(system)
 	case "report":
-		report := system.GenerateReport()
-		fmt.Println("\nLBTAS System Report")
-		fmt.Println(strings.Repeat("=", 50))
-		fmt.Printf("Total exchanges: %d\n", report.TotalExchanges)
-		fmt.Printf("Total ratings (transaction volume): %d\n", report.TotalRatings)
-
-		fmt.Println("\nOverall distribution:")
-		fmt.Println(formatDistribution(report.OverallDistribution, "  "))
-
-		fmt.Println("\nCategory distributions:")
-		for _, category := range system.categories {
-			fmt.Printf("  %s:\n", strings.Title(category))
-			fmt.Println(formatDistribution(report.CategoryDistributions[category], "    "))
-		}
-
-		if len(report.ExchangeDistributions) > 0 {
-			fmt.Println("\nPer-exchange distributions:")
-			for _, exchange := range system.GetAllExchanges() {
-				block, ok := report.ExchangeDistributions[exchange]
-				if !ok {
-					continue
-				}
-				created := createdOrUnknown(system.exchanges[exchange].Metadata.Created)
-				fmt.Printf("  %s (transaction volume: %d, in service since: %s):\n", exchange, block.Total, created)
-				fmt.Println(formatDistribution(block.Distribution, "    "))
-			}
-		}
-
-		if len(report.HarmFlagged) > 0 {
-			fmt.Println("\nHarm-flagged exchanges (received -1 No Trust):")
-			for _, entry := range report.HarmFlagged {
-				fmt.Printf("  %s: %vx -1\n", entry[0], entry[1])
-			}
-		}
-
+		reportCommand(system)
 	case "export":
-		if len(os.Args) < 4 {
-			fmt.Println("Error: format and output path required")
-			os.Exit(1)
-		}
-		format := os.Args[2]
-		output := os.Args[3]
-
-		var err error
-		switch format {
-		case "json":
-			err = system.ExportToJSON(output)
-		case "csv":
-			err = system.ExportToCSV(output)
-		default:
-			fmt.Println("Error: format must be json or csv")
-			os.Exit(1)
-		}
-
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Exported to %s\n", output)
-
+		exportCommand(system, os.Args)
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		os.Exit(1)
 	}
+}
+
+func rateCommand(system *LevesonRatingSystem, args []string) {
+	if len(args) < 3 {
+		fmt.Println("Error: Exchange name required")
+		os.Exit(1)
+	}
+	exchange := args[2]
+	if !contains(system.GetAllExchanges(), exchange) {
+		if err := system.AddExchange(exchange); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	if err := system.RateExchange(exchange); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func addCommand(system *LevesonRatingSystem, args []string) {
+	if len(args) < 5 {
+		fmt.Println("Error: exchange, criterion, and rating required")
+		os.Exit(1)
+	}
+	exchange := args[2]
+	criterion := args[3]
+	rating, err := strconv.Atoi(args[4])
+	if err != nil {
+		fmt.Printf("Error: invalid rating: %v\n", err)
+		os.Exit(1)
+	}
+
+	if !contains(system.GetAllExchanges(), exchange) {
+		if err := system.AddExchange(exchange); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	if err := system.AddRating(exchange, criterion, rating); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Added rating %d for %s to %s\n", rating, criterion, exchange)
+}
+
+func viewCommand(system *LevesonRatingSystem, args []string) {
+	if len(args) < 3 {
+		fmt.Println("Error: Exchange name required")
+		os.Exit(1)
+	}
+	exchange := args[2]
+	ratings, err := system.ViewRatings(exchange)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	created := createdOrUnknown(system.exchanges[exchange].Metadata.Created)
+	exchangeTotal := 0
+	for _, criterion := range system.categories {
+		exchangeTotal += ratings[criterion].Total
+	}
+
+	fmt.Printf("\nRatings for '%s':\n", exchange)
+	fmt.Println(strings.Repeat("=", 40))
+	fmt.Printf("In service since: %s\n", created)
+	fmt.Printf("Total ratings (transaction volume): %d\n", exchangeTotal)
+	for _, criterion := range system.categories {
+		block := ratings[criterion]
+		fmt.Printf("\n%s (total: %d):\n", strings.Title(criterion), block.Total)
+		fmt.Println(formatDistribution(block.Distribution, "  "))
+	}
+}
+
+func listCommand(system *LevesonRatingSystem) {
+	exchanges := system.GetAllExchanges()
+	if len(exchanges) == 0 {
+		fmt.Println("No exchanges registered.")
+	} else {
+		fmt.Println("Registered exchanges:")
+		for _, exchange := range exchanges {
+			ratings, _ := system.ViewRatings(exchange)
+			total := 0
+			harm := 0
+			for _, criterion := range system.categories {
+				total += ratings[criterion].Total
+				harm += ratings[criterion].Distribution["-1"]
+			}
+			line := fmt.Sprintf("  %s (%d ratings)", exchange, total)
+			if harm > 0 {
+				line += fmt.Sprintf(", %dx -1 No Trust", harm)
+			}
+			fmt.Println(line)
+		}
+	}
+}
+
+func reportCommand(system *LevesonRatingSystem) {
+	report := system.GenerateReport()
+	fmt.Println("\nLBTAS System Report")
+	fmt.Println(strings.Repeat("=", 50))
+	fmt.Printf("Total exchanges: %d\n", report.TotalExchanges)
+	fmt.Printf("Total ratings (transaction volume): %d\n", report.TotalRatings)
+
+	fmt.Println("\nOverall distribution:")
+	fmt.Println(formatDistribution(report.OverallDistribution, "  "))
+
+	fmt.Println("\nCategory distributions:")
+	for _, category := range system.categories {
+		fmt.Printf("  %s:\n", strings.Title(category))
+		fmt.Println(formatDistribution(report.CategoryDistributions[category], "    "))
+	}
+
+	if len(report.ExchangeDistributions) > 0 {
+		fmt.Println("\nPer-exchange distributions:")
+		for _, exchange := range system.GetAllExchanges() {
+			block, ok := report.ExchangeDistributions[exchange]
+			if !ok {
+				continue
+			}
+			created := createdOrUnknown(system.exchanges[exchange].Metadata.Created)
+			fmt.Printf("  %s (transaction volume: %d, in service since: %s):\n", exchange, block.Total, created)
+			fmt.Println(formatDistribution(block.Distribution, "    "))
+		}
+	}
+
+	if len(report.HarmFlagged) > 0 {
+		fmt.Println("\nHarm-flagged exchanges (received -1 No Trust):")
+		for _, entry := range report.HarmFlagged {
+			fmt.Printf("  %s: %vx -1\n", entry[0], entry[1])
+		}
+	}
+}
+
+func exportCommand(system *LevesonRatingSystem, args []string) {
+	if len(args) < 4 {
+		fmt.Println("Error: format and output path required")
+		os.Exit(1)
+	}
+	format := args[2]
+	output := args[3]
+
+	var err error
+	switch format {
+	case "json":
+		err = system.ExportToJSON(output)
+	case "csv":
+		err = system.ExportToCSV(output)
+	default:
+		fmt.Println("Error: format must be json or csv")
+		os.Exit(1)
+	}
+
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Exported to %s\n", output)
 }
