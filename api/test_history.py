@@ -169,22 +169,22 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(result["total"], 7)
 
     def test_invalid_limits_and_cursors_fail_without_returning_history(self) -> None:
-        for params in (
-            {"limit": 0},
-            {"limit": 101},
-            {"limit": "bad"},
-            {"active_cursor": "a:1"},
-            {"limit": 1, "active_cursor": "bad"},
-            {"limit": 1, "active_cursor": "d:8"},
-            {"limit": 1, "active_cursor": "a:10"},
-            {"limit": 1, "dismissed_cursor": "d:11"},
-            {"limit": 1, "active_cursor": "a:9223372036854775808"},
+        """Distinguish HTTP query validation from invalid continuation semantics."""
+        for params, status in (
+            ({"limit": 0}, 422),
+            ({"limit": 101}, 422),
+            ({"limit": "bad"}, 422),
+            ({"active_cursor": "a:1"}, 400),
+            ({"limit": 1, "active_cursor": "bad"}, 400),
+            ({"limit": 1, "active_cursor": "d:8"}, 400),
+            ({"limit": 1, "active_cursor": "a:10"}, 400),
+            ({"limit": 1, "dismissed_cursor": "d:11"}, 400),
+            ({"limit": 1, "active_cursor": "a:9223372036854775808"}, 400),
+            ({"limit": 1, "active_cursor": "a:" + "1" * 20}, 422),
         ):
             with self.subTest(params=params):
-                response = self.client.get(
-                    self.url, params=params, headers=self.headers
-                )
-                self.assertIn(response.status_code, (400, 422))
+                response = self.client.get(self.url, params=params, headers=self.headers)
+                self.assertEqual(response.status_code, status)
                 self.assertNotIn("events", response.json())
 
     def test_paged_reads_keep_fail_closed_authorization(self) -> None:
