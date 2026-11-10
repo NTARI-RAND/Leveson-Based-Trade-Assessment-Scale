@@ -128,8 +128,7 @@ def _page(
     """Read at most limit+1 rows; timestamp ties advance by immutable event ID."""
     anchor = _anchor(conn, query.party, query.role, cursor, kind)
     timestamp, event_id = anchor or (None, None)
-    rows = conn.execute(
-        """SELECT re.*, c.contested_by, c.reason AS contest_reason, c.timestamp AS contested_at,
+    select = """SELECT re.*, c.contested_by, c.reason AS contest_reason, c.timestamp AS contested_at,
                   u.upheld_by, u.reason AS uphold_reason, u.timestamp AS upheld_at,
                   d.dismissed_by, d.reason AS dismissal_reason, d.timestamp AS dismissed_at
            FROM rating_events re
@@ -137,9 +136,20 @@ def _page(
            LEFT JOIN contests c ON c.event_id = re.id
            LEFT JOIN upholds u ON u.event_id = re.id
            WHERE re.rated_party = :party AND re.role = :role
-             AND (d.event_id IS NULL) = :active
-             AND (:timestamp IS NULL OR (re.timestamp, re.id) > (:timestamp, :event_id))
-           ORDER BY re.timestamp, re.id LIMIT :limit""",
+             AND (d.event_id IS NULL) = :active"""
+    # Separate the equal-timestamp range so SQLite can seek on both index keys,
+    # including histories whose events all share one timestamp.
+    sql = select
+    if anchor:
+        sql = (
+            select
+            + " AND re.timestamp = :timestamp AND re.id > :event_id"
+            + " UNION ALL "
+            + select
+            + " AND re.timestamp > :timestamp"
+        )
+    rows = conn.execute(
+        sql + " ORDER BY timestamp, id LIMIT :limit",
         {
             "party": query.party,
             "role": query.role,
