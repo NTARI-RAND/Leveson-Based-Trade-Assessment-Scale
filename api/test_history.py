@@ -175,13 +175,33 @@ class HistoryTests(unittest.TestCase):
             })
 
     def test_unpaged_response_retains_existing_contract(self) -> None:
-        result = self.read()
-        self.assertNotIn("pagination", result)
-        self.assertEqual(
-            [row["event_id"] for row in result["events"]], [1, 2, 3, 4, 5, 6, 7]
-        )
-        self.assertEqual([row["event_id"] for row in result["dismissed"]], [8, 9])
-        self.assertEqual(result["total"], 7)
+        """Catch dropped or renamed root, event, timeout and annotation fields."""
+        events = []
+        for event_id, value, exchange, rater in (
+            (1, -1, "shared", "a"), (2, 0, "shared", "b"),
+            (3, 1, "third", "c"), (4, 2, "fourth", "system"),
+            (5, 3, "fifth", "e"), (6, 4, "sixth", "f"), (7, 2, "seventh", "g"),
+        ):
+            events.append({
+                "event_id": event_id, "value": value, "exchange_id": exchange,
+                "rater": rater, "category": None, "comment": "Local explanation",
+                "rated_at": "2026-01-03T00:00:00+00:00" if event_id == 7 else "2026-01-01T00:00:00+00:00",
+                "defaulted": event_id == 4, "contested": event_id == 5,
+            })
+        events[4].update(contested_by="Bob", contest_reason="Disputed", contested_at="2026-01-02",
+                         upheld=True, upheld_by="operator", uphold_reason="Evidence checked", upheld_at="2026-01-03")
+        dismissed = [{
+            "event_id": event_id, "value": -1, "exchange_id": exchange, "rater": rater,
+            "category": None, "comment": "Local explanation", "rated_at": "2026-01-01T00:00:00+00:00",
+            "dismissed_by": "operator", "reason": "Bad faith", "dismissed_at": "2026-01-04",
+        } for event_id, exchange, rater in [(8, "dismissed-one", "h"), (9, "dismissed-two", "i")]]
+        self.assertEqual(self.read(), {
+            "rated_party": "Bob", "role": "market_seller",
+            "distribution": {"-1": 1, "0": 1, "1": 1, "2": 2, "3": 1, "4": 1},
+            "total": 7, "transaction_count": 6, "first_rated_at": "2026-01-01T00:00:00+00:00",
+            "last_rated_at": "2026-01-03T00:00:00+00:00", "defaulted_count": 1,
+            "dismissed_count": 2, "events": events, "dismissed": dismissed,
+        })
 
     def test_invalid_limits_and_cursors_fail_without_returning_history(self) -> None:
         """Distinguish HTTP query validation from invalid continuation semantics."""
