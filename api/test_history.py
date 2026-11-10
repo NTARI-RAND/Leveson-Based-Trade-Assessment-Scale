@@ -320,6 +320,17 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(fresh["distribution"]["-1"], 0)
         self.assertEqual(fresh["dismissed_count"], 3)
 
+    def test_late_timestamp_commit_requires_a_fresh_traversal(self):
+        """A fresh traversal recovers a late commit behind an issued cursor."""
+        first = self.read(limit=2)
+        with closing(self.connection()) as conn, conn:
+            conn.execute("""INSERT INTO rating_events
+                (id, exchange_id, rater, rated_party, role, value, timestamp)
+                VALUES (12, 'late', 'z', 'Bob', 'market_seller', 4, '2025-12-31')""")
+        continued = self.read(limit=100, active_cursor=first["pagination"]["next_active_cursor"])
+        self.assertEqual([row["event_id"] for row in continued["events"]], [3, 4, 5, 6, 7])
+        self.assertEqual([row["event_id"] for row in self.read(limit=100)["events"]], [12, 1, 2, 3, 4, 5, 6, 7])
+
     def test_large_history_materializes_only_bounded_pages(self) -> None:
         with closing(self.connection()) as conn, conn:
             conn.executemany(

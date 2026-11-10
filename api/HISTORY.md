@@ -76,7 +76,9 @@ Later requests see later committed state. Appends are ordered by their stored
 timestamp and ID. A dismissal can move an older event from the active collection
 to a position before an already-issued dismissal cursor. To refresh after
 adjudication, restart both collections; this is a live history, not a frozen
-cross-request export. Original records are never deleted or modified by reads.
+cross-request export. A rating timestamp can precede its commit: a late commit
+can fall behind an issued cursor. A complete refreshed view requires a new
+traversal from the first page, even when only ratings were appended. Original records are never deleted or modified by reads.
 
 SQL computes full-history summaries and fetches at most `limit + 1` rows per
 collection. Python page memory is bounded by those rows and their stored field
