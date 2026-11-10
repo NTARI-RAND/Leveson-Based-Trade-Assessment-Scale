@@ -159,6 +159,21 @@ class HistoryTests(unittest.TestCase):
                 self.assertEqual(row["upheld_at"], "2026-01-03")
                 self.assertEqual(row["reason"], "Forgiven")
 
+    def test_pending_contest_remains_visible_without_uphold(self):
+        """Dropping unresolved contest details must fail for both read modes."""
+        with closing(self.connection()) as conn, conn:
+            conn.execute("INSERT INTO contests (event_id, contested_by, reason, timestamp) VALUES (3, 'Bob', 'Pending review', '2026-01-02')")
+        for params in ({}, {"limit": 7}):
+            row = self.read(**params)["events"][2]
+            self.assertEqual(row, {
+                "event_id": 3, "value": 1, "category": None,
+                "comment": "Local explanation", "exchange_id": "third",
+                "rater": "c", "rated_at": "2026-01-01T00:00:00+00:00",
+                "defaulted": False, "contested": True, "contested_by": "Bob",
+                "contest_reason": "Pending review", "contested_at": "2026-01-02",
+                "upheld": False,
+            })
+
     def test_unpaged_response_retains_existing_contract(self) -> None:
         result = self.read()
         self.assertNotIn("pagination", result)
