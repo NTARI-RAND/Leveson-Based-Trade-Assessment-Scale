@@ -91,7 +91,8 @@ databases. Index creation can take time on large existing databases.
 
 ## Verification
 
-Install `api/requirements.txt` and the test client dependency `httpx2`, then run:
+Install `api/requirements.txt` and the test client dependency `httpx2`
+(or `httpx` with older FastAPI/Starlette releases), then run:
 
 ```sh
 python -m unittest api.test_history -v

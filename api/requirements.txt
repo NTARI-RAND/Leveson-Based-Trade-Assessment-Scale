@@ -21,6 +21,6 @@ uvicorn[standard]>=0.20.0
 #   curl -H "X-API-Key: <your-key>" http://localhost:8000/ratings/<party>/<role>
 #
 # Opt-in history pagination and continuation: see api/HISTORY.md.
-# HTTP regression tests (test-only dependency):
+# HTTP regression tests (test-only dependency; use httpx with older FastAPI/Starlette):
 #   pip install httpx2
 #   python -m unittest api.test_history -v
