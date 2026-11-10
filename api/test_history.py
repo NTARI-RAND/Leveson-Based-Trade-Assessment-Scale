@@ -305,6 +305,8 @@ class HistoryTests(unittest.TestCase):
             conn.execute("""INSERT INTO dismissals (event_id, dismissed_by, reason, timestamp)
                 SELECT id, 'operator', 'Bad faith', '2026-03-01' FROM rating_events
                 WHERE exchange_id LIKE 'dismissed-bulk-%'""")
+        # Warm the HTTP client and worker before measuring the page request.
+        self.read(limit=1)
         tracemalloc.start()
         try:
             result = self.read(limit=100)
