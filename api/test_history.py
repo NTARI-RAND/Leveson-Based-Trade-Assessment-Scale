@@ -135,6 +135,30 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(upheld["contested_by"], "Bob")
         self.assertEqual(upheld["uphold_reason"], "Evidence checked")
 
+    def test_dismissed_history_preserves_prior_contest_and_uphold(self):
+        """A dismissal must not erase earlier adjudication in either read path."""
+        with closing(self.connection()) as conn, conn:
+            conn.execute(
+                "INSERT INTO dismissals (event_id, dismissed_by, reason, timestamp) VALUES (5, 'operator', 'Forgiven', '2026-01-05')"
+            )
+        for params in ({}, {"limit": 100}):
+            with self.subTest(params=params):
+                row = next(
+                    row
+                    for row in self.read(**params)["dismissed"]
+                    if row["event_id"] == 5
+                )
+                self.assertIn("contested", row)
+                self.assertTrue(row["contested"])
+                self.assertEqual(row["contested_by"], "Bob")
+                self.assertEqual(row["contest_reason"], "Disputed")
+                self.assertEqual(row["contested_at"], "2026-01-02")
+                self.assertTrue(row["upheld"])
+                self.assertEqual(row["upheld_by"], "operator")
+                self.assertEqual(row["uphold_reason"], "Evidence checked")
+                self.assertEqual(row["upheld_at"], "2026-01-03")
+                self.assertEqual(row["reason"], "Forgiven")
+
     def test_unpaged_response_retains_existing_contract(self) -> None:
         result = self.read()
         self.assertNotIn("pagination", result)

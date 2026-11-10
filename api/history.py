@@ -28,29 +28,34 @@ class InvalidCursorError(ValueError):
 def active_event(row: sqlite3.Row) -> dict:
     """Retain the existing active-event representation and accountability fields."""
     event = _event_fields(row)
-    event.update(
-        defaulted=row["rater_role"] == "system",
-        contested=row["contested_by"] is not None,
-    )
-    if event["contested"]:
-        event.update(
+    event.update(defaulted=row["rater_role"] == "system", **_contest_fields(row))
+    return event
+
+
+def _contest_fields(row: sqlite3.Row) -> dict:
+    """Keep the complete contest trail when a rating is later dismissed."""
+    fields = {"contested": row["contested_by"] is not None}
+    if fields["contested"]:
+        fields.update(
             contested_by=row["contested_by"],
             contest_reason=row["contest_reason"],
             contested_at=row["contested_at"],
             upheld=row["upheld_by"] is not None,
         )
-        if event["upheld"]:
-            event.update(
+        if fields["upheld"]:
+            fields.update(
                 upheld_by=row["upheld_by"],
                 uphold_reason=row["uphold_reason"],
                 upheld_at=row["upheld_at"],
             )
-    return event
+    return fields
 
 
 def dismissed_event(row: sqlite3.Row) -> dict:
     """A dismissal forgives but never hides the original event or its reason."""
     event = _event_fields(row)
+    if row["contested_by"] is not None:
+        event.update(_contest_fields(row))
     event.update(
         dismissed_by=row["dismissed_by"],
         reason=row["dismissal_reason"],
