@@ -50,3 +50,22 @@ The rest of the covenant lifecycle divides by layer:
   role-agnostic; an operator needing per-role distributions does so as Agrinet does.
 - No implementation averages, exposes a single score, or derives a limit from the harm
   distribution — the invariants whose violation would rebuild the credit bureau all hold.
+
+## Operator API history reads
+
+The `api/` implementation scopes histories by party and role (SPEC §§2–3).
+Every paged or unpaged response carries the complete active distribution,
+counts/timestamps, six-level `dismissed_distribution`, and `harm_index` naming
+every −1 and every dismissal with its state and dismissal explanation (§§4, 6).
+Only detailed event arrays are paged; timeout and contest/uphold annotations
+remain available (§§5–7). Summaries, index and arrays share one SQLite snapshot.
+Clients MUST display both distributions and the full harm index from any page,
+and MUST NOT present one page as the entire history.
+
+Bindings: `python -m unittest api.test_history -v` (off-page accountability,
+all six dismissal counts, party/role isolation, annotations, both cursors,
+large history and concurrent writes); `python -m unittest api.test_initialization -v`
+(startup and request-time schema boundary). Run these in separate processes.
+These API checks run by hand until CI runs the `api/` tests; no hosted API-test
+coverage is claimed. See [API contract and resource limits](api/HISTORY.md).
+This implementation note does not change the standalone-library matrix above.

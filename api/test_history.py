@@ -32,8 +32,7 @@ class HistoryTests(unittest.TestCase):
         ):
             self.addCleanup(context.stop)
             context.start()
-        self.client = TestClient(app)
-        self.addCleanup(self.client.close)
+        self.client = self.enterContext(TestClient(app))
         self.headers = {"X-API-Key": "history-test-key"}
         self.url = "/ratings/Bob/market_seller"
         self.seed_history()
@@ -76,7 +75,7 @@ class HistoryTests(unittest.TestCase):
 
     def connection(self, *args, **kwargs) -> sqlite3.Connection:
         """Use a real independent connection for each request."""
-        return self.connect(self.path, *args, **kwargs)
+        return self.connect(self.path, **kwargs)
 
     def read(self, **params) -> dict:
         """Read through the mounted HTTP route, including query validation."""
@@ -85,6 +84,145 @@ class HistoryTests(unittest.TestCase):
         if "limit" in params:
             self.assertIn("pagination", response.json())
         return response.json()
+
+    def test_complete_harm_index_ignores_page_and_cursors(self):
+        """Dropping off-page harm/dismissals, duplicating -1s or leaking scope fails."""
+        with closing(self.connection()) as conn, conn:
+            conn.execute("""INSERT INTO rating_events
+                (id, exchange_id, rater, rated_party, role, value, comment, timestamp)
+                VALUES (12, 'newest-harm', 'z', 'Bob', 'market_seller', -1,
+                        'Accountable harm', '2026-02-01')""")
+            conn.execute("""INSERT INTO dismissals
+                (event_id, dismissed_by, reason, timestamp)
+                VALUES (7, 'operator', 'Forgiven', '2026-02-02')""")
+            conn.execute("""INSERT INTO contests
+                (event_id, contested_by, reason, timestamp)
+                VALUES (1, 'Bob', 'Review pending', '2026-02-02')""")
+            conn.execute("""INSERT INTO contests
+                (event_id, contested_by, reason, timestamp)
+                VALUES (9, 'Bob', 'Disputed', '2026-01-02')""")
+            conn.execute("""INSERT INTO upholds
+                (event_id, upheld_by, reason, timestamp)
+                VALUES (9, 'operator', 'Checked', '2026-01-03')""")
+        expected = [
+            {
+                "event_id": 12,
+                "exchange_id": "newest-harm",
+                "rated_at": "2026-02-01",
+                "value": -1,
+                "state": "active",
+                "contested": False,
+                "upheld": False,
+            },
+            {
+                "event_id": 7,
+                "exchange_id": "seventh",
+                "rated_at": "2026-01-03T00:00:00+00:00",
+                "value": 2,
+                "state": "dismissed",
+                "contested": False,
+                "upheld": False,
+                "dismissed_by": "operator",
+                "reason": "Forgiven",
+                "dismissed_at": "2026-02-02",
+            },
+            {
+                "event_id": 9,
+                "exchange_id": "dismissed-two",
+                "rated_at": "2026-01-01T00:00:00+00:00",
+                "value": -1,
+                "state": "dismissed",
+                "contested": True,
+                "upheld": True,
+                "dismissed_by": "operator",
+                "reason": "Bad faith",
+                "dismissed_at": "2026-01-04",
+            },
+            {
+                "event_id": 8,
+                "exchange_id": "dismissed-one",
+                "rated_at": "2026-01-01T00:00:00+00:00",
+                "value": -1,
+                "state": "dismissed",
+                "contested": False,
+                "upheld": False,
+                "dismissed_by": "operator",
+                "reason": "Bad faith",
+                "dismissed_at": "2026-01-04",
+            },
+            {
+                "event_id": 1,
+                "exchange_id": "shared",
+                "rated_at": "2026-01-01T00:00:00+00:00",
+                "value": -1,
+                "state": "active",
+                "contested": True,
+                "upheld": False,
+            },
+        ]
+        for params in (
+            {},
+            {"limit": 1},
+            {"limit": 1, "active_cursor": "a:12", "dismissed_cursor": "d:7"},
+        ):
+            with self.subTest(params=params):
+                result = self.read(**params)
+                self.assertIn("harm_index", result)
+                self.assertEqual(result["harm_index"], expected)
+                self.assertEqual(
+                    result["dismissed_distribution"],
+                    {"-1": 2, "0": 0, "1": 0, "2": 1, "3": 0, "4": 0},
+                )
+                self.assertEqual(result["dismissed_count"], 3)
+                if params == {"limit": 1}:
+                    self.assertEqual([r["event_id"] for r in result["events"]], [1])
+                    self.assertEqual([r["event_id"] for r in result["dismissed"]], [8])
+
+    def test_dismissed_distribution_keeps_every_level_separate(self):
+        """Pooling dismissal levels or including another role/party must fail."""
+        with closing(self.connection()) as conn, conn:
+            conn.executemany(
+                """INSERT INTO dismissals
+                (event_id, dismissed_by, reason, timestamp)
+                VALUES (?, 'operator', 'Resolved', '2026-02-02')""",
+                [(i,) for i in (1, 2, 3, 4, 5, 6)],
+            )
+        for params in ({}, {"limit": 1}):
+            result = self.read(**params)
+            self.assertIn("dismissed_distribution", result)
+            self.assertEqual(
+                result["dismissed_distribution"],
+                {"-1": 3, "0": 1, "1": 1, "2": 1, "3": 1, "4": 1},
+            )
+            self.assertEqual(result["dismissed_count"], 8)
+            self.assertEqual(len(result["harm_index"]), 8)
+
+    def test_clean_history_has_empty_index_and_zero_dismissed_levels(self):
+        """Clean history must not acquire another scope's harm or missing levels."""
+        self.url = "/ratings/Clean/market_seller"
+        with closing(self.connection()) as conn, conn:
+            conn.execute("""INSERT INTO rating_events
+                (exchange_id, rater, rated_party, role, value, timestamp)
+                VALUES ('clean', 'a', 'Clean', 'market_seller', 4, '2026-02-01')""")
+        for params in ({}, {"limit": 1}):
+            result = self.read(**params)
+            self.assertIn("harm_index", result)
+            self.assertEqual(result["harm_index"], [])
+            self.assertEqual(
+                result["dismissed_distribution"],
+                {"-1": 0, "0": 0, "1": 0, "2": 0, "3": 0, "4": 0},
+            )
+
+    def test_fixture_supports_real_application_lifespan(self):
+        """Startup's positional database path must not conflict with fixture path."""
+        try:
+            with TestClient(app) as client:
+                response = client.get(
+                    self.url, params={"limit": 1}, headers=self.headers
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+        except TypeError as error:
+            self.fail(f"Fixture cannot enter application lifespan: {error}")
 
     def test_page_keeps_full_history_summary(self) -> None:
         result = self.read(limit=2)
@@ -252,6 +390,49 @@ class HistoryTests(unittest.TestCase):
                 "last_rated_at": "2026-01-03T00:00:00+00:00",
                 "defaulted_count": 1,
                 "dismissed_count": 2,
+                "dismissed_distribution": {
+                    "-1": 2,
+                    "0": 0,
+                    "1": 0,
+                    "2": 0,
+                    "3": 0,
+                    "4": 0,
+                },
+                "harm_index": [
+                    {
+                        "event_id": 9,
+                        "value": -1,
+                        "exchange_id": "dismissed-two",
+                        "rated_at": "2026-01-01T00:00:00+00:00",
+                        "state": "dismissed",
+                        "contested": False,
+                        "upheld": False,
+                        "dismissed_by": "operator",
+                        "reason": "Bad faith",
+                        "dismissed_at": "2026-01-04",
+                    },
+                    {
+                        "event_id": 8,
+                        "value": -1,
+                        "exchange_id": "dismissed-one",
+                        "rated_at": "2026-01-01T00:00:00+00:00",
+                        "state": "dismissed",
+                        "contested": False,
+                        "upheld": False,
+                        "dismissed_by": "operator",
+                        "reason": "Bad faith",
+                        "dismissed_at": "2026-01-04",
+                    },
+                    {
+                        "event_id": 1,
+                        "value": -1,
+                        "exchange_id": "shared",
+                        "rated_at": "2026-01-01T00:00:00+00:00",
+                        "state": "active",
+                        "contested": False,
+                        "upheld": False,
+                    },
+                ],
                 "events": events,
                 "dismissed": dismissed,
             },
@@ -372,7 +553,50 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(result["dismissed_count"], 2)
         self.assertEqual(result["last_rated_at"], "2026-01-03T00:00:00+00:00")
         self.assertEqual([row["event_id"] for row in result["events"]], [1, 2])
+        self.assertEqual([row["event_id"] for row in result["harm_index"]], [9, 8, 1])
         fresh = self.read(limit=2)
+        self.assertEqual(fresh["distribution"]["-1"], 0)
+        self.assertEqual(fresh["dismissed_count"], 3)
+
+    def test_unpaged_summary_and_index_share_snapshot_during_committed_write(
+        self,
+    ) -> None:
+        with closing(self.connection()) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+        database = self.path
+        injected = []
+
+        class InterleavedConnection(sqlite3.Connection):
+            """Commit another connection after the first summary query starts."""
+
+            def execute(self, sql, parameters=()):
+                cursor = super().execute(sql, parameters)
+                if sql.lstrip().startswith("SELECT") and not injected:
+                    injected.append(True)
+                    with closing(sqlite3.connect(database)) as writer, writer:
+                        writer.execute("""INSERT INTO rating_events
+                            (exchange_id, rater, rated_party, role, value, timestamp)
+                            VALUES ('new', 'z', 'Bob', 'market_seller', 4, '2026-01-05')""")
+                        writer.execute(
+                            "INSERT INTO dismissals (event_id, dismissed_by, reason, timestamp) VALUES (1, 'operator', 'Resolved', '2026-01-05')"
+                        )
+                return cursor
+
+        def reader(*_args, **_kwargs) -> sqlite3.Connection:
+            conn = sqlite3.connect(database, factory=InterleavedConnection)
+            conn.row_factory = sqlite3.Row
+            return conn
+
+        with patch.object(event_store, "get_connection", side_effect=reader):
+            result = self.read()
+        self.assertTrue(injected, "Concurrent-write fixture did not run")
+        self.assertEqual(result["distribution"]["-1"], 1)
+        self.assertEqual(result["transaction_count"], 6)
+        self.assertEqual(result["dismissed_count"], 2)
+        self.assertEqual(result["last_rated_at"], "2026-01-03T00:00:00+00:00")
+        self.assertEqual([row["event_id"] for row in result["events"][:2]], [1, 2])
+        self.assertEqual([row["event_id"] for row in result["harm_index"]], [9, 8, 1])
+        fresh = self.read()
         self.assertEqual(fresh["distribution"]["-1"], 0)
         self.assertEqual(fresh["dismissed_count"], 3)
 
@@ -435,14 +659,27 @@ class HistoryTests(unittest.TestCase):
             conn.execute("""INSERT INTO dismissals (event_id, dismissed_by, reason, timestamp)
                 SELECT id, 'operator', 'Bad faith', '2026-03-01' FROM rating_events
                 WHERE exchange_id LIKE 'dismissed-bulk-%'""")
-        # Warm the HTTP client and worker before measuring the page request.
-        self.read(limit=1)
-        tracemalloc.start()
-        try:
-            result = self.read(limit=100)
-            peak = tracemalloc.get_traced_memory()[1]
-        finally:
-            tracemalloc.stop()
+        # The mandatory complete harm index scales with harm/dismissal count.
+        # Measure only narrative pages; never weaken their original 2 MB bound.
+        from api.history import HistoryQuery, _page
+
+        with closing(self.connection()) as conn:
+            tracemalloc.start()
+            try:
+                query = HistoryQuery("Bob", "market_seller", 100)
+                active, _ = _page(conn, query, None, "a")
+                dismissed, _ = _page(conn, query, None, "d")
+                peak = tracemalloc.get_traced_memory()[1]
+            finally:
+                tracemalloc.stop()
+        self.assertEqual(len(active), 100)
+        self.assertEqual(len(dismissed), 100)
+        result = self.read(limit=100)
+        self.assertEqual(len(result["harm_index"]), 20003)
+        self.assertEqual(
+            result["dismissed_distribution"],
+            {"-1": 20002, "0": 0, "1": 0, "2": 0, "3": 0, "4": 0},
+        )
         self.assertEqual(len(result["events"]), 100)
         self.assertEqual(len(result["dismissed"]), 100)
         self.assertEqual(result["total"], 20007)

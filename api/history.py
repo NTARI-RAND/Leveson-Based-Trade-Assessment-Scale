@@ -1,4 +1,4 @@
-"""Bounded, role-scoped history reads from one local SQLite snapshot.
+"""Role-scoped history pages and complete accountability from one SQLite snapshot.
 
 Licensed under GNU Affero General Public License v3.0.
 """
@@ -9,6 +9,8 @@ import re
 import sqlite3
 from dataclasses import dataclass
 
+from . import event_store
+
 
 @dataclass(frozen=True)
 class HistoryQuery:
@@ -16,7 +18,7 @@ class HistoryQuery:
 
     party: str
     role: str
-    limit: int
+    limit: int | None
     active_cursor: str | None = None
     dismissed_cursor: str | None = None
 
@@ -94,12 +96,55 @@ def _summary(conn: sqlite3.Connection, party: str, role: str) -> dict:
         + active,
         parameters,
     ).fetchone()
-    dismissed = conn.execute(
-        """SELECT COUNT(*) FROM rating_events re JOIN dismissals d ON d.event_id = re.id
-           WHERE re.rated_party = ? AND re.role = ?""",
+    dismissed_distribution = {str(level): 0 for level in range(-1, 5)}
+    for dismissed_row in conn.execute(
+        """SELECT re.value, COUNT(*) AS n FROM rating_events re
+           JOIN dismissals d ON d.event_id = re.id
+           WHERE re.rated_party = ? AND re.role = ? GROUP BY re.value""",
         parameters,
-    ).fetchone()[0]
-    return {"distribution": distribution, **dict(row), "dismissed_count": dismissed}
+    ):
+        dismissed_distribution[str(dismissed_row["value"])] = dismissed_row["n"]
+    return {
+        "distribution": distribution,
+        **dict(row),
+        "dismissed_count": sum(dismissed_distribution.values()),
+        "dismissed_distribution": dismissed_distribution,
+        "harm_index": _harm_index(conn, party, role),
+    }
+
+
+def _harm_index(conn: sqlite3.Connection, party: str, role: str) -> list[dict]:
+    """Every -1 or dismissal once, newest rating first; never page away harm."""
+    rows = conn.execute(
+        """SELECT re.id AS event_id, re.exchange_id, re.timestamp AS rated_at,
+                  re.value, d.event_id AS dismissal_id, d.dismissed_by,
+                  d.reason, d.timestamp AS dismissed_at, c.contested_by, u.upheld_by
+           FROM rating_events re
+           LEFT JOIN dismissals d ON d.event_id = re.id
+           LEFT JOIN contests c ON c.event_id = re.id
+           LEFT JOIN upholds u ON u.event_id = re.id
+           WHERE re.rated_party = ? AND re.role = ?
+             AND (re.value = -1 OR d.event_id IS NOT NULL)
+           ORDER BY re.timestamp DESC, re.id DESC""",
+        (party, role),
+    )
+    result = []
+    for row in rows:
+        dismissed = row["dismissal_id"] is not None
+        item = {
+            key: row[key] for key in ("event_id", "exchange_id", "rated_at", "value")
+        }
+        item.update(
+            state="dismissed" if dismissed else "active",
+            contested=row["contested_by"] is not None,
+            upheld=row["upheld_by"] is not None,
+        )
+        if dismissed:
+            item.update(
+                {key: row[key] for key in ("dismissed_by", "reason", "dismissed_at")}
+            )
+        result.append(item)
+    return result
 
 
 def _anchor(
@@ -166,11 +211,29 @@ def _page(
     return [serialize(row) for row in rows[: query.limit]], continuation
 
 
-def read_page(conn: sqlite3.Connection, query: HistoryQuery) -> dict:
+def read_history(conn: sqlite3.Connection, query: HistoryQuery) -> dict:
     """One request sees one snapshot, including annotations and full-history totals."""
     conn.execute("BEGIN")
     try:
         summary = _summary(conn, query.party, query.role)
+        if query.limit is None:
+            return {
+                "rated_party": query.party,
+                "role": query.role,
+                **summary,
+                "events": [
+                    active_event(row)
+                    for row in event_store.get_events_for_party_role(
+                        conn, query.party, query.role
+                    )
+                ],
+                "dismissed": [
+                    dismissed_event(row)
+                    for row in event_store.get_dismissed_events_for_party_role(
+                        conn, query.party, query.role
+                    )
+                ],
+            }
         events, next_active = _page(conn, query, query.active_cursor, "a")
         dismissed, next_dismissed = _page(conn, query, query.dismissed_cursor, "d")
         return {

@@ -26,8 +26,6 @@ LBTAS is the **assessment scale** of the JFA **covenant layer**: reputation as a
 | Reputation gates **whether**, never **how much** | The library derives no credit limit, weight, or ceiling from the distribution — no such API exists | API surface |
 | **Non-portable by default** | Per-platform data; no cross-platform identity or import path in the library | API surface |
 | **Observational diversity across implementations** | Four reference implementations (Go, Python, Rust, TypeScript) that must stay in parity — independent encodings of one behavior | CLAUDE.md parity rule; see stand-ins |
-| API history keeps full distributions, counts and role isolation (§§2–3 of `SPEC.md`) | Opt-in `limit` bounds event arrays; `api/history.py` aggregates the full active history in SQL within the same SQLite snapshot as the page | `python -m unittest api.test_history -v`; full-history totals, role/party isolation, large-history and interleaved-write cases |
-| Dismissal annotates and remains visible (§§4, 6); timeout defaults remain distinguishable (§7) | Independent dismissed-history continuation retains original event and dismissal annotation; active events retain default/contest/uphold markers; unpaged reads remain compatible | `api/test_history.py`: dismissal traversal, annotation, timeout, legacy and dismissed-only cases; [API contract](api/HISTORY.md) |
 
 ## Deliberately out of scope
 

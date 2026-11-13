@@ -27,8 +27,11 @@ POST /ratings/{event_id}/dismiss lets an adjudicator dismiss a bad-faith
 rating (SPEC.md §4, §6): the dismissal is its own append-only annotation,
 never an edit or delete of the original event. GET /ratings/{party}/{role}
 computes its distribution from active (non-dismissed) events only, but
-always surfaces every dismissed event alongside it, with who dismissed it
-and why — dismissal forgives, it does not hide. There is no distinct
+always surfaces every −1 and dismissed event in a complete harm_index, with
+state and dismissal details. Both read modes include six-level dismissed counts.
+Optional limit/cursors page only the detailed event arrays; they never truncate
+the index. Every read uses one SQLite snapshot. Dismissal forgives, it does
+not hide. There is no distinct
 adjudicator identity yet; dismissal is gated behind the same LBTAS_API_KEY
 as reads, which is coarser than SPEC.md's "operator-local adjudicator role."
 
@@ -384,73 +387,27 @@ def read_ratings(
     show up in, or be averaged into, the rated party's market_buyer distribution.
 
     The distribution/total/timestamps below reflect only active (non-dismissed)
-    events (SPEC.md §6). Dismissed events are never omitted from the response
-    entirely — they remain navigable under "dismissed", annotated with who
-    dismissed them and why, even if that leaves no active events at all.
-    With limit, both arrays are paged; summaries still cover the full history.
+    events (SPEC.md §6). Every -1 and dismissal remains in harm_index on every
+    response, with separate dismissed_distribution counts. Only detailed event
+    arrays are paged; summaries and accountability share the same full snapshot.
     """
     if limit is None and (active_cursor is not None or dismissed_cursor is not None):
         raise HTTPException(status_code=400, detail="History cursors require limit")
     conn = event_store.get_connection(initialize=False)
     try:
-        if limit is not None:
-            try:
-                query = history.HistoryQuery(
+        try:
+            result = history.read_history(
+                conn, history.HistoryQuery(
                     rated_party, role, limit, active_cursor, dismissed_cursor
                 )
-                result = history.read_page(conn, query)
-            except history.InvalidCursorError as error:
-                raise HTTPException(status_code=400, detail=str(error)) from error
-            if result["total"] == 0 and result["dismissed_count"] == 0:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No ratings found for '{rated_party}' in role '{role}'",
-                )
-            return result
-        active_rows = event_store.get_events_for_party_role(conn, rated_party, role)
-        dismissed_rows = event_store.get_dismissed_events_for_party_role(conn, rated_party, role)
+            )
+        except history.InvalidCursorError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        if result["total"] == 0 and result["dismissed_count"] == 0:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No ratings found for '{rated_party}' in role '{role}'",
+            )
+        return result
     finally:
         conn.close()
-
-    if not active_rows and not dismissed_rows:
-        raise HTTPException(
-            status_code=404, detail=f"No ratings found for '{rated_party}' in role '{role}'"
-        )
-
-    return _legacy_history(rated_party, role, active_rows, dismissed_rows)
-
-
-def _legacy_history(rated_party: str, role: str, active_rows: list, dismissed_rows: list) -> dict:
-    """Preserve the unpaged representation using shared event serializers."""
-    distribution = _new_distribution()
-    for row in active_rows:
-        distribution[str(row["value"])] += 1
-
-    events = [history.active_event(row) for row in active_rows]
-    dismissed = [history.dismissed_event(row) for row in dismissed_rows]
-
-    defaulted_count = sum(1 for row in active_rows if row["rater_role"] == "system")
-
-    result = {
-        "rated_party": rated_party,
-        "role": role,
-        "distribution": distribution,
-        "total": len(active_rows),
-        "events": events,
-        "defaulted_count": defaulted_count,
-        "dismissed_count": len(dismissed),
-        "dismissed": dismissed,
-    }
-
-    if active_rows:
-        timestamps = [row["timestamp"] for row in active_rows]
-        exchange_ids = {row["exchange_id"] for row in active_rows}
-        result["first_rated_at"] = min(timestamps)
-        result["last_rated_at"] = max(timestamps)
-        result["transaction_count"] = len(exchange_ids)
-    else:
-        result["first_rated_at"] = None
-        result["last_rated_at"] = None
-        result["transaction_count"] = 0
-
-    return result
