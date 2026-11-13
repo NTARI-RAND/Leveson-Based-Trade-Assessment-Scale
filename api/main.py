@@ -27,8 +27,11 @@ POST /ratings/{event_id}/dismiss lets an adjudicator dismiss a bad-faith
 rating (SPEC.md §4, §6): the dismissal is its own append-only annotation,
 never an edit or delete of the original event. GET /ratings/{party}/{role}
 computes its distribution from active (non-dismissed) events only, but
-always surfaces every dismissed event alongside it, with who dismissed it
-and why — dismissal forgives, it does not hide. There is no distinct
+always surfaces every −1 and dismissed event in a complete harm_index, with
+state and dismissal details. Both read modes include six-level dismissed counts.
+Optional limit/cursors page only the detailed event arrays; they never truncate
+the index. Every read uses one SQLite snapshot. Dismissal forgives, it does
+not hide. There is no distinct
 adjudicator identity yet; dismissal is gated behind the same LBTAS_API_KEY
 as reads, which is coarser than SPEC.md's "operator-local adjudicator role."
 
@@ -64,10 +67,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from . import event_store
+from . import event_store, history
 from .rating_validation import RatingValidationError, validate_rating_submission
 
 @asynccontextmanager
@@ -373,98 +376,38 @@ def apply_timeouts(exchange_id: str) -> dict:
 
 
 @app.get("/ratings/{rated_party}/{role}", dependencies=[Depends(require_api_key)])
-def read_ratings(rated_party: str, role: str) -> dict:
+def read_ratings(
+    rated_party: str,
+    role: str,
+    limit: Optional[int] = Query(None, ge=1, le=100),
+    active_cursor: Optional[str] = Query(None, max_length=21),
+    dismissed_cursor: Optional[str] = Query(None, max_length=21),
+) -> dict:
     """Role-scoped read (SPEC.md §3): a -1 earned as e.g. market_seller must never
     show up in, or be averaged into, the rated party's market_buyer distribution.
 
     The distribution/total/timestamps below reflect only active (non-dismissed)
-    events (SPEC.md §6). Dismissed events are never omitted from the response
-    entirely — they're always listed under "dismissed", annotated with who
-    dismissed them and why, even if that leaves no active events at all.
+    events (SPEC.md §6). Every -1 and dismissal remains in harm_index on every
+    response, with separate dismissed_distribution counts. Only detailed event
+    arrays are paged; summaries and accountability share the same full snapshot.
     """
+    if limit is None and (active_cursor is not None or dismissed_cursor is not None):
+        raise HTTPException(status_code=400, detail="History cursors require limit")
     conn = event_store.get_connection(initialize=False)
     try:
-        active_rows = event_store.get_events_for_party_role(conn, rated_party, role)
-        dismissed_rows = event_store.get_dismissed_events_for_party_role(conn, rated_party, role)
+        try:
+            result = history.read_history(
+                conn, history.HistoryQuery(
+                    rated_party, role, limit, active_cursor, dismissed_cursor
+                )
+            )
+        except history.InvalidCursorError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        if result["total"] == 0 and result["dismissed_count"] == 0:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No ratings found for '{rated_party}' in role '{role}'",
+            )
+        return result
     finally:
         conn.close()
-
-    if not active_rows and not dismissed_rows:
-        raise HTTPException(
-            status_code=404, detail=f"No ratings found for '{rated_party}' in role '{role}'"
-        )
-
-    distribution = _new_distribution()
-    for row in active_rows:
-        distribution[str(row["value"])] += 1
-
-    events = []
-    for row in active_rows:
-        event = {
-            "event_id": row["id"],
-            "value": row["value"],
-            "category": row["category"],
-            "comment": row["comment"],
-            "exchange_id": row["exchange_id"],
-            "rater": row["rater"],
-            "rated_at": row["timestamp"],
-            # SPEC.md §7: a timeout default MUST be distribution-distinguishable
-            # from an affirmed rating — never look like praise or like silence.
-            "defaulted": row["rater_role"] == "system",
-            "contested": row["contested_by"] is not None,
-        }
-        if row["contested_by"] is not None:
-            event["contested_by"] = row["contested_by"]
-            event["contest_reason"] = row["contest_reason"]
-            event["contested_at"] = row["contested_at"]
-            event["upheld"] = row["upheld_by"] is not None
-            # SPEC.md §6: surface that a contested rating was upheld, not just
-            # that it was contested — a pending contest and a resolved one
-            # must not look the same.
-            if row["upheld_by"] is not None:
-                event["upheld_by"] = row["upheld_by"]
-                event["uphold_reason"] = row["uphold_reason"]
-                event["upheld_at"] = row["upheld_at"]
-        events.append(event)
-
-    dismissed = [
-        {
-            "event_id": row["id"],
-            "value": row["value"],
-            "category": row["category"],
-            "comment": row["comment"],
-            "exchange_id": row["exchange_id"],
-            "rater": row["rater"],
-            "rated_at": row["timestamp"],
-            "dismissed_by": row["dismissed_by"],
-            "reason": row["dismissal_reason"],
-            "dismissed_at": row["dismissed_at"],
-        }
-        for row in dismissed_rows
-    ]
-
-    defaulted_count = sum(1 for row in active_rows if row["rater_role"] == "system")
-
-    result = {
-        "rated_party": rated_party,
-        "role": role,
-        "distribution": distribution,
-        "total": len(active_rows),
-        "events": events,
-        "defaulted_count": defaulted_count,
-        "dismissed_count": len(dismissed),
-        "dismissed": dismissed,
-    }
-
-    if active_rows:
-        timestamps = [row["timestamp"] for row in active_rows]
-        exchange_ids = {row["exchange_id"] for row in active_rows}
-        result["first_rated_at"] = min(timestamps)
-        result["last_rated_at"] = max(timestamps)
-        result["transaction_count"] = len(exchange_ids)
-    else:
-        result["first_rated_at"] = None
-        result["last_rated_at"] = None
-        result["transaction_count"] = 0
-
-    return result

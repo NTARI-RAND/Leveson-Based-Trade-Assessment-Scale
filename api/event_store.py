@@ -153,6 +153,10 @@ def _init_db(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_rating_events_party_role ON rating_events (rated_party, role)"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_rating_events_history "
+        "ON rating_events (rated_party, role, timestamp, id)"
+    )
     # SPEC.md §4/§6: a dismissal annotates, never erases. It is its own
     # append-only record referencing the original event, never an edit or
     # delete against rating_events. One dismissal per event (UNIQUE).
@@ -326,9 +330,13 @@ def get_dismissed_events_for_party_role(
     cursor = conn.execute(
         """
         SELECT re.*, d.dismissed_by AS dismissed_by, d.reason AS dismissal_reason,
-               d.timestamp AS dismissed_at
+               d.timestamp AS dismissed_at,
+               c.contested_by, c.reason AS contest_reason, c.timestamp AS contested_at,
+               u.upheld_by, u.reason AS uphold_reason, u.timestamp AS upheld_at
         FROM rating_events re
         JOIN dismissals d ON d.event_id = re.id
+        LEFT JOIN contests c ON c.event_id = re.id
+        LEFT JOIN upholds u ON u.event_id = re.id
         WHERE re.rated_party = ? AND re.role = ?
         ORDER BY re.timestamp
         """,
