@@ -66,6 +66,15 @@ interface SystemReport {
 // Display order for distributions: best (+4) to worst (-1).
 const RATING_LEVELS = [4, 3, 2, 1, 0, -1];
 
+const RATING_DESCRIPTIONS: { [key: number]: string } = {
+  '-1': 'No Trust - User was harmed, exploited, or received a product or service with no discipline or malicious intent.',
+  '0': 'Cynical Satisfaction - Interaction fulfills a basic promise requiring little to no discipline toward user satisfaction.',
+  '1': 'Basic Promise - Interaction meets all articulated user demands, no more.',
+  '2': 'Basic Satisfaction - Interaction meets socially acceptable standards exceeding articulated user demands.',
+  '3': 'No Negative Consequences - Interaction designed to prevent loss, exceed basic quality.',
+  '4': 'Delight - Interaction anticipates the evolution of user practices and concerns post-transaction.'
+};
+
 // Short label for each rating level.
 const RATING_LABELS: { [key: string]: string } = {
   '4': 'Delight',
@@ -103,15 +112,6 @@ function formatDistribution(dist: Distribution, indent: string = '  '): string {
 class LevesonRatingSystem {
   private readonly DEFAULT_CATEGORIES = ['reliability', 'usability', 'performance', 'support'];
   
-  private readonly RATING_DESCRIPTIONS: { [key: number]: string } = {
-    '-1': 'No Trust - User was harmed, exploited, or received a product or service with no discipline or malicious intent.',
-    '0': 'Cynical Satisfaction - Interaction fulfills a basic promise requiring little to no discipline toward user satisfaction.',
-    '1': 'Basic Promise - Interaction meets all articulated user demands, no more.',
-    '2': 'Basic Satisfaction - Interaction meets socially acceptable standards exceeding articulated user demands.',
-    '3': 'No Negative Consequences - Interaction designed to prevent loss, exceed basic quality.',
-    '4': 'Delight - Interaction anticipates the evolution of user practices and concerns post-transaction.'
-  };
-
   private categories: string[];
   private storagePath: string | null;
   private exchanges: StorageData;
@@ -191,7 +191,7 @@ class LevesonRatingSystem {
     console.log(`\nRate ${criterion.charAt(0).toUpperCase() + criterion.slice(1)}:`);
     console.log('='.repeat(50));
     
-    for (const [rating, description] of Object.entries(this.RATING_DESCRIPTIONS)) {
+    for (const [rating, description] of Object.entries(RATING_DESCRIPTIONS)) {
       console.log(`${rating.padStart(2)}: ${description}`);
     }
     
@@ -365,6 +365,7 @@ async function main() {
   if (args.length === 0) {
     console.log('LBTAS - Leveson-Based Trade Assessment Scale');
     console.log('\nUsage:');
+    console.log('  node lbtas.js scale');
     console.log('  node lbtas.js rate <exchange>');
     console.log('  node lbtas.js add <exchange> <criterion> <rating>');
     console.log('  node lbtas.js view <exchange>');
@@ -375,6 +376,15 @@ async function main() {
   }
 
   const command = args[0];
+  if (command === 'scale') {
+    for (const level of RATING_LEVELS) {
+      const sign = level > 0 ? '+' : '';
+      console.log(`${sign}${level}: ${RATING_DESCRIPTIONS[level]}`);
+    }
+    console.log('\nRatings are never averaged. A rating of -1 records harm.');
+    return;
+  }
+
   const storage = 'lbtas_ratings.json';
   const system = new LevesonRatingSystem(storage);
 

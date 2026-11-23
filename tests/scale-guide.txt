@@ -1,0 +1,8 @@
++4: Delight - Interaction anticipates the evolution of user practices and concerns post-transaction.
++3: No Negative Consequences - Interaction designed to prevent loss, exceed basic quality.
++2: Basic Satisfaction - Interaction meets socially acceptable standards exceeding articulated user demands.
++1: Basic Promise - Interaction meets all articulated user demands, no more.
+0: Cynical Satisfaction - Interaction fulfills a basic promise requiring little to no discipline toward user satisfaction.
+-1: No Trust - User was harmed, exploited, or received a product or service with no discipline or malicious intent.
+
+Ratings are never averaged. A rating of -1 records harm.

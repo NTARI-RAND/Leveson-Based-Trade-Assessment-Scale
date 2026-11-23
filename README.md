@@ -115,7 +115,13 @@ print(ratings["reliability"])
 
 ### Command Line Interface
 
+Use `scale` to look up all six rating definitions before choosing a rating.
+The guide works offline without opening a ratings file.
+
 ```bash
+# Show the rating scale
+python3 lbtas.py scale
+
 # Interactive rating
 python3 lbtas.py rate --exchange "MyService"
 

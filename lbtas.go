@@ -474,6 +474,7 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("LBTAS - Leveson-Based Trade Assessment Scale")
 		fmt.Println("\nUsage:")
+		fmt.Println("  lbtas scale")
 		fmt.Println("  lbtas rate <exchange>")
 		fmt.Println("  lbtas add <exchange> <criterion> <rating>")
 		fmt.Println("  lbtas view <exchange>")
@@ -484,6 +485,18 @@ func main() {
 	}
 
 	command := os.Args[1]
+	if command == "scale" {
+		for _, level := range ratingLevels {
+			sign := ""
+			if level > 0 {
+				sign = "+"
+			}
+			fmt.Printf("%s%d: %s\n", sign, level, ratingDescriptions[level])
+		}
+		fmt.Println("\nRatings are never averaged. A rating of -1 records harm.")
+		return
+	}
+
 	storage := "lbtas_ratings.json"
 	system := NewLevesonRatingSystem(storage, nil)
 

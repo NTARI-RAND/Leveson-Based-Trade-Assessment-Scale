@@ -5,6 +5,13 @@ All notable changes to LBTAS will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- The offline `scale` command in all four reference CLIs prints the six rating
+  definitions without opening the ratings file.
+
 ## [2.0.0] - 2026-06-28
 
 Distribution release. **Breaking change to the read API:** ratings are no

@@ -433,6 +433,7 @@ fn main() {
     if args.len() < 2 {
         println!("LBTAS - Leveson-Based Trade Assessment Scale");
         println!("\nUsage:");
+        println!("  lbtas scale");
         println!("  lbtas rate <exchange>");
         println!("  lbtas add <exchange> <criterion> <rating>");
         println!("  lbtas view <exchange>");
@@ -443,6 +444,16 @@ fn main() {
     }
 
     let command = &args[1];
+    if command == "scale" {
+        let descriptions = rating_descriptions();
+        for level in RATING_LEVELS {
+            let sign = if level > 0 { "+" } else { "" };
+            println!("{sign}{level}: {}", descriptions[&level]);
+        }
+        println!("\nRatings are never averaged. A rating of -1 records harm.");
+        return;
+    }
+
     let storage = "lbtas_ratings.json".to_string();
     let mut system = LevesonRatingSystem::new(Some(storage), None);
 

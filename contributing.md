@@ -67,6 +67,25 @@ python3 lbtas.py report
 python3 -c "from lbtas import LevesonRatingSystem; rs = LevesonRatingSystem(); rs.add_exchange('test'); print('OK')"
 ```
 
+To run the offline scale guide acceptance tests from the repository root:
+
+```bash
+npm install --no-package-lock
+python3 tests/test_scale_cli.py -v
+```
+
+The suite checks exact guide text, help output, and behavior with missing,
+corrupt, and valid rating stores. Python 3 runs the suite. To exercise all four
+CLIs, also install Go, Cargo with Rust, and Node.js with npm. The npm step
+installs the local TypeScript compiler and types. Cargo may need network access
+to fetch Rust dependencies on the first build. The builds use temporary
+directories, including any Cargo lockfile generated for the test.
+
+Missing tools or a missing TypeScript install skip only their language. A build
+error with the required tools installed fails that language. Review the output
+for skips when verifying all four CLIs. The check that the guide never opens a
+named pipe runs on platforms with POSIX named pipes.
+
 ### 5. Commit Messages
 
 Format: `type: brief description`
