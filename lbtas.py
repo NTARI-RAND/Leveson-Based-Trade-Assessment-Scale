@@ -401,6 +401,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  lbtas scale
   lbtas rate --exchange "MyService"
   lbtas add --exchange "MyService" --criterion reliability --rating 3
   lbtas view --exchange "MyService"
@@ -414,6 +415,7 @@ Examples:
                        help='Storage file for ratings (default: lbtas_ratings.json)')
     
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    subparsers.add_parser('scale', help='Show the six rating definitions offline')
     
     # Rate command (interactive)
     rate_parser = subparsers.add_parser('rate', help='Rate an exchange interactively')
@@ -444,6 +446,13 @@ Examples:
     
     if not args.command:
         parser.print_help()
+        return
+
+    if args.command == 'scale':
+        for level in LevesonRatingSystem.RATING_LEVELS:
+            sign = "+" if level > 0 else ""
+            print(f"{sign}{level}: {LevesonRatingSystem.RATING_DESCRIPTIONS[level]}")
+        print("\nRatings are never averaged. A rating of -1 records harm.")
         return
     
     # Initialize rating system
