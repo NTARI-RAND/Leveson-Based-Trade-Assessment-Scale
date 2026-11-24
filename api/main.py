@@ -299,9 +299,8 @@ def register_exchange(exchange: ExchangeRegistration) -> dict:
     """Register an exchange's two rating directions and start its rating
     window (SPEC.md §7). Ungated, same posture as POST /ratings.
 
-    completed_at is parsed and required to be timezone-aware here: stored
-    unparsed, a malformed or naive value would surface later as a 500 inside
-    apply_timeout_defaults's datetime arithmetic instead of a clean 400 now.
+    Validate timezone awareness and deadline arithmetic before storing the
+    completion time and rating window.
     """
     if exchange.completed_at is not None:
         try:
@@ -317,7 +316,8 @@ def register_exchange(exchange: ExchangeRegistration) -> dict:
             )
         completed_at = exchange.completed_at
     else:
-        completed_at = datetime.now(timezone.utc).isoformat()
+        parsed_completed_at = datetime.now(timezone.utc)
+        completed_at = parsed_completed_at.isoformat()
 
     # gt=0 on the model already rejects 0/negative; None means "use the default".
     rating_window_seconds = (
@@ -325,6 +325,13 @@ def register_exchange(exchange: ExchangeRegistration) -> dict:
         if exchange.rating_window_seconds is not None
         else DEFAULT_RATING_WINDOW_SECONDS
     )
+    try:
+        event_store.rating_window_due_at(parsed_completed_at, rating_window_seconds)
+    except OverflowError as e:
+        raise HTTPException(
+            status_code=400,
+            detail="completed_at plus rating_window_seconds is outside the supported datetime range",
+        ) from e
 
     conn = event_store.get_connection(initialize=False)
     try:
