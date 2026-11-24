@@ -62,10 +62,10 @@ import os
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
 from . import event_store
 from .rating_validation import RatingValidationError, validate_rating_submission
@@ -97,10 +97,19 @@ def require_api_key(x_api_key: Optional[str] = Header(None)) -> None:
         raise HTTPException(status_code=401, detail="Missing or invalid API key.")
 
 
+def require_nonblank_identifier(value: str) -> str:
+    if not value.strip():
+        raise ValueError("Identifier must contain a non-whitespace character")
+    return value
+
+
+NonblankIdentifier = Annotated[str, AfterValidator(require_nonblank_identifier)]
+
+
 class RatingSubmission(BaseModel):
-    exchange_id: str = Field(..., description="Triggering exchange/transaction id")
-    rater: str = Field(..., description="Party submitting the rating")
-    rated_party: str = Field(..., description="Party being rated")
+    exchange_id: NonblankIdentifier = Field(..., description="Triggering exchange/transaction id")
+    rater: NonblankIdentifier = Field(..., description="Party submitting the rating")
+    rated_party: NonblankIdentifier = Field(..., description="Party being rated")
     # Deliberately free text, not a closed enum: SPEC.md §3 gives named examples
     # (market_seller/market_buyer, service_provider/service_client,
     # plan_producer/plan_backer) as "e.g.", derived from the exchange type,
@@ -109,10 +118,10 @@ class RatingSubmission(BaseModel):
     # operator-layer concern (exchange-type validation belongs upstream of
     # this API, same division CONFORMANCE.md draws for the rest of the
     # covenant lifecycle), not a gap to close with a hardcoded vocabulary here.
-    role: str = Field(
+    role: NonblankIdentifier = Field(
         ...,
         min_length=1,
-        description="Capacity the rated party acted in, e.g. 'market_seller', 'market_buyer' (SPEC.md §3); open vocabulary, not validated here",
+        description="Capacity the rated party acted in, e.g. 'market_seller', 'market_buyer' (SPEC.md §3); open vocabulary",
     )
     category: Optional[str] = None
     value: int = Field(..., description="Rating value, -1 to +4")
@@ -137,11 +146,11 @@ class UpholdRequest(BaseModel):
 
 
 class ExchangeRegistration(BaseModel):
-    exchange_id: str = Field(..., description="Unique id for this exchange")
-    party_a: str = Field(..., description="One party to the exchange")
-    role_a: str = Field(..., min_length=1, description="Capacity party_a acted in; party_b rates party_a on this")
-    party_b: str = Field(..., description="The other party to the exchange")
-    role_b: str = Field(..., min_length=1, description="Capacity party_b acted in; party_a rates party_b on this")
+    exchange_id: NonblankIdentifier = Field(..., description="Unique id for this exchange")
+    party_a: NonblankIdentifier = Field(..., description="One party to the exchange")
+    role_a: NonblankIdentifier = Field(..., min_length=1, description="Capacity party_a acted in; party_b rates party_a on this")
+    party_b: NonblankIdentifier = Field(..., description="The other party to the exchange")
+    role_b: NonblankIdentifier = Field(..., min_length=1, description="Capacity party_b acted in; party_a rates party_b on this")
     completed_at: Optional[str] = Field(
         None, description="ISO-8601 completion time; defaults to now if omitted"
     )

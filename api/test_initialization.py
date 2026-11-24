@@ -11,6 +11,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
@@ -120,6 +121,57 @@ class InitializationTests(unittest.TestCase):
                 self.assertEqual(len(event_store.get_events_for_party_role(conn, 'bob', 'seller')), 12)
             finally:
                 conn.close()
+
+
+class IdentifierValidationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_blank_identifiers_are_rejected_before_any_write(self):
+        cases = (
+            ('/ratings', 'rating_events', {
+                'exchange_id': 'rating-check', 'rater': 'alice',
+                'rated_party': 'bob', 'role': 'seller',
+            }, {'value': 2}),
+            ('/exchanges', 'exchanges', {
+                'exchange_id': 'registration-check', 'party_a': 'alice',
+                'party_b': 'bob', 'role_a': 'buyer', 'role_b': 'seller',
+            }, {}),
+        )
+        async with main.app.router.lifespan_context(main.app):
+            with closing(event_store.get_connection(initialize=False)) as conn:
+                for path, table, identifiers, extras in cases:
+                    count_sql = f'SELECT COUNT(*) FROM {table}'
+                    original_count = conn.execute(count_sql).fetchone()[0]
+                    for field in identifiers:
+                        for index, blank in enumerate(('', ' \t\n', '\u00a0')):
+                            with self.subTest(path=path, field=field, blank=blank):
+                                payload = {**identifiers, **extras,
+                                           'exchange_id': f'{table}-{field}-{index}', field: blank}
+                                status, _ = await request('POST', path, payload)
+                                self.assertEqual(status, 422)
+                    with self.subTest(table=table):
+                        self.assertEqual(conn.execute(count_sql).fetchone()[0], original_count)
+
+    async def test_nonblank_identifiers_and_custom_roles_are_stored_verbatim(self):
+        exchange = {
+            'exchange_id': '  Trade-ABC  ', 'party_a': '  Alice  ',
+            'party_b': '  Bob  ', 'role_a': '  Custom Buyer  ',
+            'role_b': '  Custom Seller  ',
+        }
+        rating = {
+            'exchange_id': exchange['exchange_id'], 'rater': exchange['party_a'],
+            'rated_party': exchange['party_b'], 'role': exchange['role_b'], 'value': 2,
+        }
+
+        async with main.app.router.lifespan_context(main.app):
+            status, _ = await request('POST', '/exchanges', exchange)
+            self.assertEqual(status, 201)
+            status, _ = await request('POST', '/ratings', rating)
+            self.assertEqual(status, 201)
+
+            with closing(event_store.get_connection(initialize=False)) as conn:
+                stored_exchange = event_store.get_exchange(conn, exchange['exchange_id'])
+                self.assertEqual({key: stored_exchange[key] for key in exchange}, exchange)
+                events = event_store.get_events_for_party_role(conn, rating['rated_party'], rating['role'])
+                self.assertEqual([{key: event[key] for key in rating} for event in events], [rating])
 
 
 if __name__ == '__main__':
