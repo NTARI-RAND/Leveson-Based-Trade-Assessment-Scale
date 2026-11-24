@@ -12,6 +12,8 @@ import sqlite3
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -120,6 +122,63 @@ class InitializationTests(unittest.TestCase):
                 self.assertEqual(len(event_store.get_events_for_party_role(conn, 'bob', 'seller')), 12)
             finally:
                 conn.close()
+
+
+class RatingWindowTests(unittest.IsolatedAsyncioTestCase):
+    async def register(self, exchange_id, **window):
+        return await request('POST', '/exchanges', {
+            'exchange_id': exchange_id, 'party_a': 'alice', 'role_a': 'buyer',
+            'party_b': 'bob', 'role_b': 'seller', **window,
+        })
+
+    async def test_unrepresentable_deadlines_are_rejected_before_registration(self):
+        cases = (
+            ('duration-overflow', '2026-01-01T12:00:00+00:00', 10**18),
+            ('date-overflow', '9999-12-31T23:59:59+00:00', 1),
+        )
+        async with main.app.router.lifespan_context(main.app):
+            with closing(event_store.get_connection(initialize=False)) as conn:
+                for exchange_id, completed_at, seconds in cases:
+                    with self.subTest(exchange_id=exchange_id):
+                        status, _ = await self.register(
+                            exchange_id, completed_at=completed_at, rating_window_seconds=seconds,
+                        )
+                        self.assertEqual(
+                            (status, event_store.get_exchange(conn, exchange_id)), (400, None),
+                        )
+
+    async def test_registered_offset_timestamp_keeps_the_exact_timeout_boundary(self):
+        completed_at = '2026-01-01T12:00:00+05:30'
+        async with main.app.router.lifespan_context(main.app):
+            status, data = await self.register(
+                'offset-boundary', completed_at=completed_at, rating_window_seconds=60,
+            )
+            self.assertEqual(status, 201)
+            self.assertEqual(data['completed_at'], completed_at)
+            with closing(event_store.get_connection(initialize=False)) as conn:
+                before_due = datetime(2026, 1, 1, 6, 30, 59, 999999, tzinfo=timezone.utc)
+                exactly_due = datetime(2026, 1, 1, 6, 31, tzinfo=timezone.utc)
+                result = event_store.apply_timeout_defaults(conn, 'offset-boundary', before_due)
+                self.assertEqual(result, {
+                    'status': 'not_due', 'due_at': '2026-01-01T12:01:00+05:30', 'defaulted': [],
+                })
+                result = event_store.apply_timeout_defaults(conn, 'offset-boundary', exactly_due)
+                self.assertEqual(result, {
+                    'status': 'processed', 'due_at': '2026-01-01T12:01:00+05:30',
+                    'defaulted': ['alice', 'bob'],
+                })
+
+    async def test_omitted_completion_and_window_keep_the_existing_defaults(self):
+        async with main.app.router.lifespan_context(main.app):
+            before = datetime.now(timezone.utc)
+            status, data = await self.register('default-window')
+            after = datetime.now(timezone.utc)
+            self.assertEqual(status, 201)
+            self.assertEqual(data['rating_window_seconds'], 604800)
+            completed_at = datetime.fromisoformat(data['completed_at'])
+            self.assertEqual(completed_at.tzinfo, timezone.utc)
+            self.assertLessEqual(before, completed_at)
+            self.assertLessEqual(completed_at, after)
 
 
 if __name__ == '__main__':

@@ -477,6 +477,10 @@ def get_exchange(conn: sqlite3.Connection, exchange_id: str) -> Optional[sqlite3
     return conn.execute("SELECT * FROM exchanges WHERE exchange_id = ?", (exchange_id,)).fetchone()
 
 
+def rating_window_due_at(completed_at: datetime, rating_window_seconds: int) -> datetime:
+    return completed_at + timedelta(seconds=rating_window_seconds)
+
+
 def apply_timeout_defaults(conn: sqlite3.Connection, exchange_id: str, now: datetime) -> dict:
     """Backfill a system-attributed +2 (SPEC.md §7) for any direction of
     `exchange_id` still unrated once its rating window has elapsed.
@@ -491,7 +495,7 @@ def apply_timeout_defaults(conn: sqlite3.Connection, exchange_id: str, now: date
         raise ExchangeNotFoundError(f"No exchange registered with id '{exchange_id}'")
 
     completed_at = datetime.fromisoformat(exchange["completed_at"])
-    due_at = completed_at + timedelta(seconds=exchange["rating_window_seconds"])
+    due_at = rating_window_due_at(completed_at, exchange["rating_window_seconds"])
     if now < due_at:
         return {"status": "not_due", "due_at": due_at.isoformat(), "defaulted": []}
 
