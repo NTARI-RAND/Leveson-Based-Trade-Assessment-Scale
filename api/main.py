@@ -65,7 +65,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 from . import event_store
 from .rating_validation import RatingValidationError, validate_rating_submission
@@ -115,7 +115,7 @@ class RatingSubmission(BaseModel):
         description="Capacity the rated party acted in, e.g. 'market_seller', 'market_buyer' (SPEC.md §3); open vocabulary, not validated here",
     )
     category: Optional[str] = None
-    value: int = Field(..., description="Rating value, -1 to +4")
+    value: StrictInt = Field(..., description="Rating value, -1 to +4")
     comment: Optional[str] = Field(
         None, description="Justifying comment; mandatory and <=500 words when value is -1"
     )

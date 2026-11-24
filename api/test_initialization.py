@@ -122,5 +122,46 @@ class InitializationTests(unittest.TestCase):
                 conn.close()
 
 
+class RatingSubmissionTests(unittest.IsolatedAsyncioTestCase):
+    async def submit(self, exchange_id, rated_party, value, comment=None):
+        return await request('POST', '/ratings', {
+            'exchange_id': exchange_id, 'rater': 'alice', 'rated_party': rated_party,
+            'role': 'seller', 'value': value, 'comment': comment,
+        })
+
+    async def test_non_integer_json_values_are_rejected_without_persistence(self):
+        async with main.app.router.lifespan_context(main.app):
+            for index, value in enumerate((True, False, '2', 2.0, 2.5)):
+                with self.subTest(value=value):
+                    status, _ = await self.submit(f'invalid-{index}', 'invalid-rating-seller', value)
+                    self.assertEqual(status, 422)
+
+            status, _ = await request('GET', '/ratings/invalid-rating-seller/seller')
+            self.assertEqual(status, 404)
+
+    async def test_all_six_integer_ratings_are_accepted_and_stored(self):
+        async with main.app.router.lifespan_context(main.app):
+            for value in (-1, 0, 1, 2, 3, 4):
+                with self.subTest(value=value):
+                    comment = ' '.join(['word'] * 500) if value == -1 else None
+                    status, data = await self.submit(f'valid-{value}', 'valid-rating-seller', value, comment)
+                    self.assertEqual(status, 201)
+                    self.assertEqual(data['submission']['value'], value)
+
+            status, data = await request('GET', '/ratings/valid-rating-seller/seller')
+            self.assertEqual(status, 200)
+            self.assertEqual(data['distribution'], {'-1': 1, '0': 1, '1': 1, '2': 1, '3': 1, '4': 1})
+
+    async def test_harm_ratings_still_require_a_bounded_comment(self):
+        async with main.app.router.lifespan_context(main.app):
+            for index, comment in enumerate((None, '  ', ' '.join(['word'] * 501), 'a' * 10_001)):
+                with self.subTest(case=index):
+                    status, _ = await self.submit(f'harm-{index}', 'harm-rating-seller', -1, comment)
+                    self.assertEqual(status, 400)
+
+            status, _ = await request('GET', '/ratings/harm-rating-seller/seller')
+            self.assertEqual(status, 404)
+
+
 if __name__ == '__main__':
     unittest.main()
